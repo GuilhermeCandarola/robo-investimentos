@@ -1038,8 +1038,10 @@ def construir_dashboard(wb, ctx):
         if df_ is None or df_.empty:
             continue
         for pos_, (_, l_) in enumerate(df_.head(40).iterrows(), 1):
+            campos_ = ficha_linha(l_, cols_)
+            campos_.insert(len(campos_) - 1, ["Quando paga (data ex)", padrao_proventos(p.get("proventos"), str(l_["Ticker"]), AGORA.date())])
             fichas[f"{cls_}:{l_['Ticker']}"] = {"nome": NOMES.get(l_["Ticker"], ""), "pos": pos_,
-                                                "campos": ficha_linha(l_, cols_)}
+                                                "campos": campos_}
     # renda fixa
     mrf = []
     cdi = ctx.get("cdi")
@@ -1133,7 +1135,8 @@ def construir_dashboard(wb, ctx):
         "alvos": {k: list(v) for k, v in par["tabela_alvos"].items()},
         "aporte": float(par.get("aporte") or 0), "div_cresc": float(par.get("div_cresc") or 0),
         "rf": linhas_rf, "ac": acoes, "fi": fiis, "compras": lotes_html,
-        "melhores_ac": [list(t) + [tk] for t, tk in zip(mac, tk_ac)], "melhores_fi": [list(t) + [tk] for t, tk in zip(mfi, tk_fi)],
+        "melhores_ac": [list(t) + [tk, padrao_proventos(p.get("proventos"), tk, AGORA.date())] for t, tk in zip(mac, tk_ac)],
+        "melhores_fi": [list(t) + [tk, padrao_proventos(p.get("proventos"), tk, AGORA.date())] for t, tk in zip(mfi, tk_fi)],
         "melhores_rf": [list(t) for t in mrf], "fichas": fichas,
         "x": extras, "aviso": AVISO}
 
@@ -1219,9 +1222,47 @@ def serie_desempenho(linhas):
             "aplicado": [_num_or_none(l[5]) for l in linhas], "inicio": ds[0].strftime("%d/%m/%Y")}
 
 
+def _eventos(p_prov, tk, hoje):
+    """[(data usada, valor, e_pagamento)] dos ultimos 12 meses. Usa a data de PAGAMENTO quando a fonte traz; senao a data ex."""
+    out = []
+    if p_prov is None or p_prov.empty:
+        return out
+    sub = p_prov[p_prov["Ticker"] == tk]
+    pag = sub["Data pagamento"] if "Data pagamento" in sub.columns else [None] * len(sub)
+    for d_, v_, p_ in zip(sub["Data"], sub["Valor (R$/cota)"], pag):
+        try:
+            d0 = dt.date.fromisoformat(str(d_)[:10])
+            val = float(v_)
+        except (ValueError, TypeError):
+            continue
+        if not (0 <= (hoje - d0).days <= 365):
+            continue
+        try:
+            dp, ep = dt.date.fromisoformat(str(p_)[:10]), True
+        except (ValueError, TypeError):
+            dp, ep = d0, False
+        out.append((dp, val, ep))
+    return out
+
+
+def padrao_proventos(p_prov, tk, hoje):
+    """Texto curto: como e quando o ativo costuma pagar."""
+    ev = _eventos(p_prov, tk, hoje)
+    if not ev:
+        return "sem dado de pagamento nas fontes consultadas (Fundamentus e Yahoo)"
+    rot = "pagamento" if all(e for _, _, e in ev) else "data ex (pagamento sai depois)"
+    ds = [d for d, _, _ in ev]
+    if len({(d.year, d.month) for d in ds}) >= 9:
+        dias = sorted(d.day for d in ds)
+        return f"mensal, {rot} em torno do dia {dias[len(dias) // 2]:02d}"
+    ds = sorted(ds, key=lambda d: (d.month, d.day))
+    n = len(ds)
+    return f"{n} vez{'es' if n > 1 else ''} ao ano, {rot} em " + ", ".join(d.strftime("%d/%m") for d in ds[:6])
+
+
 def calendario_proventos(p_prov, ativos, hoje):
     """Proximos 12 meses de proventos: o que cada ativo pagou nos ultimos 12 meses x quantidade atual.
-    Cada item traz o dia estimado (data 'com' do ano passado, repetida neste ano)."""
+    Cada item traz o dia estimado (pagamento do ano passado, repetido neste ano; se so houver data ex, ela)."""
     meses = []
     y, m = hoje.year, hoje.month
     for i in range(12):
@@ -1236,16 +1277,7 @@ def calendario_proventos(p_prov, ativos, hoje):
             d[1].append(dia)
     for a in ativos:
         tk, qtd = a["tk"], a["qtd"]
-        ev = []
-        if p_prov is not None and not p_prov.empty:
-            sub = p_prov[p_prov["Ticker"] == tk]
-            for d_, v_ in zip(sub["Data"], sub["Valor (R$/cota)"]):
-                try:
-                    d0 = dt.date.fromisoformat(str(d_)[:10])
-                except ValueError:
-                    continue
-                if (hoje - d0).days <= 365 and d0 <= hoje:
-                    ev.append((d0, float(v_)))
+        ev = [(d, v) for d, v, _ in _eventos(p_prov, tk, hoje)]
         if ev:
             mensal = len({(d.year, d.month) for d, _ in ev}) >= 9
             if mensal:
@@ -1521,7 +1553,7 @@ const donut=(items,cores,centro)=>{const tot=items.reduce((a,x)=>a+x.v,0)||1;let
  let arcs=items.map((x,i)=>{const f=x.v/tot;const a=`<circle cx="80" cy="80" r="${r}" fill="none" stroke="${cores[i%cores.length]}" stroke-width="30" stroke-dasharray="${f*c} ${c}" stroke-dashoffset="${-off*c}" transform="rotate(-90 80 80)"/>`;off+=f;return a}).join('');
  const lg=items.map((x,i)=>`<div><i style="background:${cores[i%cores.length]}"></i>${x.n} <b style="float:right;margin-left:14px">${P(x.v/tot)}</b></div>`).join('');
  return `<div class="dn"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="Gráfico de rosca">${arcs}<text x="80" y="76" text-anchor="middle" font-size="11" fill="currentColor" opacity=".6">Total</text><text x="80" y="94" text-anchor="middle" font-size="14" font-weight="700" fill="currentColor">${centro}</text></svg><div class="lg">${lg}</div></div>`};
-const barras=(lista,cor,f,cls)=>lista.length?lista.map(x=>`<div ${cls&&x[2]?`class="clk" data-f="${cls}:${x[2]}" title="Clique para ver todos os dados"`:''} style="margin-top:12px"><div class="bh"><b>${x[0]}</b><span>${f(x[1])}</span></div><div class="bar"><b style="width:${Math.max(2,Math.min(100,x[1]*100/(Math.max(...lista.map(y=>y[1]))||1)))}%;background:${cor}"></b></div></div>`).join(''):'<div class="vazio">Sem dados nesta atualização.</div>';
+const barras=(lista,cor,f,cls)=>lista.length?lista.map(x=>`<div ${cls&&x[2]?`class="clk" data-f="${cls}:${x[2]}" title="Clique para ver todos os dados"`:''} style="margin-top:12px"><div class="bh"><span><b>${x[0]}</b>${x[3]?`<div class="mu" style="font-weight:400">Paga: ${x[3]}</div>`:''}</span><span>${f(x[1])}</span></div><div class="bar"><b style="width:${Math.max(2,Math.min(100,x[1]*100/(Math.max(...lista.map(y=>y[1]))||1)))}%;background:${cor}"></b></div></div>`).join(''):'<div class="vazio">Sem dados nesta atualização.</div>';
 const notaPC='<div class="mu" style="margin-top:8px">Preço de compra = preço pago, buscado em Minhas compras e vendas. * Mais de uma compra: média dos preços pagos. Investido = quantidade × preço médio com taxas.</div>';
 function tabRV(lst,key,rot){
  if(!lst.length)return `<div class="vazio">Você ainda não tem ${rot} cadastrados na aba Renda Variavel de Minha_Carteira.xlsx. Quando cadastrar, esta área mostra o gráfico e a tabela.</div>`;
@@ -1584,7 +1616,7 @@ function secDesemp(){if(!X)return '';const H=X.hist;
 function secProv(){if(!X)return '';const C=X.prov,mx=Math.max(...C.map(c=>c.total),1);
  const bars=C.map(c=>`<div style="flex:1;min-width:46px;text-align:center"><div style="height:120px;display:flex;align-items:flex-end;justify-content:center"><div title="${R(c.total)}" style="width:70%;background:var(--ac);border-radius:5px 5px 0 0;height:${Math.max(2,c.total/mx*100)}%"></div></div><div style="font-size:11px;margin-top:4px;font-weight:600">${fmt(c.total,2)}</div><div class="mu" style="font-size:11px">${c.mes}</div></div>`).join('');
  const rows=C.filter(c=>c.total>0).map(c=>`<tr><td>${c.mes}</td><td>${c.itens.map(i=>i[0]+' '+fmt(i[1],2)+(i[2]?' <span class="mu">(dia '+i[2]+')</span>':'')).join(' · ')}</td><td class="r"><b>${fmt(c.total,2)}</b></td></tr>`).join('');
- return `<section class="card big"><h3>Calendário de proventos e renda passiva</h3><div class="mu">Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é a \"data ex\" do ano passado (a partir dela o ativo negocia sem direito ao provento); o dinheiro costuma cair na conta de 1 a 15 dias depois, conforme o comunicado da empresa/fundo. Confirme no comunicado oficial.</div>
+ return `<section class="card big"><h3>Calendário de proventos e renda passiva</h3><div class="mu">Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é o dia de pagamento do ano passado repetido neste ano, quando a fonte (Fundamentus) informa; sem isso, é a data ex, e o dinheiro cai alguns dias depois. Datas podem mudar: confirme no comunicado oficial.</div>
  <div class="row" style="margin-top:12px"><div class="card"><div class="l">Proventos em 12 meses</div><div class="v">${R(X.prov12)}</div><div class="s">média de ${R(X.prov12/12)} por mês</div></div>
  <div class="card"><div class="l">Rendimento mensal da renda fixa</div><div class="v">${R(X.rf_mes)}</div><div class="s">líquido de IR, estimativa</div></div>
  <div class="card"><div class="l">Renda mensal total</div><div class="v" style="color:var(--rf)">${R(X.rf_mes+X.prov12/12)}</div><div class="s">renda fixa + proventos</div></div></div>

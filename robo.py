@@ -377,39 +377,95 @@ def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
     return pd.DataFrame(linhas, columns=cols, dtype=float)
 
 
-def proventos_lote(tickers, ttl=1):
-    """Proventos pagos nos ultimos ~2 anos (Yahoo Finance, events=div), so dos ativos da carteira.
-    Devolve DataFrame Ticker, Data, Valor (R$ por acao/cota). Cache de 1 dia; nunca levanta erro."""
-    cols = ["Ticker", "Data", "Valor (R$/cota)"]
+def _data_br(txt):
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", str(txt or ""))
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
+
+
+def _prov_fundamentus(tk, fii):
+    """Proventos do Fundamentus (traz data com e, quase sempre, a DATA DE PAGAMENTO): [(data_com, valor, data_pag)]."""
+    base = "fii_proventos.php" if fii else "proventos.php"
+    doc = lxml_html.fromstring(http_get(f"https://www.fundamentus.com.br/{base}?papel={tk}&tipo=2",
+                                        timeout=15, tentativas=1).decode("latin-1", errors="replace"))
+    out = []
+    for tab in doc.xpath("//table"):
+        cab = [c.text_content().strip().lower() for c in tab.xpath(".//tr[1]/*")]
+        if not cab or not any("valor" in c for c in cab) or not any("data" in c for c in cab):
+            continue
+        i_v = next(k for k, c in enumerate(cab) if "valor" in c)
+        i_p = next((k for k, c in enumerate(cab) if "pag" in c), None)
+        i_d = next((k for k, c in enumerate(cab) if "data" in c and "pag" not in c), None)
+        if i_d is None:
+            continue
+        for tr in tab.xpath(".//tr")[1:]:
+            tds = [td.text_content().strip() for td in tr.xpath("./td")]
+            if len(tds) <= max(i_v, i_d):
+                continue
+            d, v = _data_br(tds[i_d]), br_num(tds[i_v])
+            if d and v == v and v > 0:
+                out.append((d, float(v), _data_br(tds[i_p]) if i_p is not None and len(tds) > i_p else ""))
+        if out:
+            break
+    return out
+
+
+def _prov_yahoo(tk):
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(tk + '.SA')}"
+           f"?range=2y&interval=1mo&events=div")
+    js = json.loads(http_get(url, timeout=15, tentativas=1))
+    ev = ((js["chart"]["result"][0].get("events") or {}).get("dividends") or {})
+    return [(dt.datetime.fromtimestamp(v["date"]).strftime("%Y-%m-%d"), float(v["amount"]), "") for v in ev.values()]
+
+
+def proventos_lote(tickers, fiis_set=(), ttl=1):
+    """Proventos dos ultimos ~2 anos. 1o Fundamentus (com data de pagamento); se nao houver, Yahoo (so data ex).
+    DataFrame Ticker, Data, Valor, Data pagamento. Cache de 1 dia; nunca levanta erro."""
+    cols = ["Ticker", "Data", "Valor (R$/cota)", "Data pagamento"]
     if DEMO or not tickers:
         return pd.DataFrame(columns=cols)
     CACHE.mkdir(exist_ok=True)
-    arq = CACHE / "proventos1.pkl"
+    arq = CACHE / "proventos2.pkl"
     try:
         memo = pd.read_pickle(arq) if arq.exists() else {}
     except Exception:  # noqa
         memo = {}
     agora = time.time()
+    corte = (dt.date.today() - dt.timedelta(days=800)).isoformat()
+    pend = [t for t in tickers if not memo.get(t) or agora - memo[t]["t"] >= ttl * 86400]
+
+    def um(t):
+        fii = (t in fiis_set) if fiis_set else t.endswith("11")
+        res, fonte, falha = [], "", False
+        for f in (fii, not fii):
+            try:
+                res = _prov_fundamentus(t, f)
+            except Exception:  # noqa
+                res, falha = [], True
+            if res:
+                fonte = "fundamentus"
+                break
+        if not res:
+            try:
+                res, fonte = _prov_yahoo(t), "yahoo"
+            except Exception:  # noqa
+                res, falha = [], True
+        return t, [r for r in res if r[0] >= corte], fonte, falha
     falhas = 0
-    for t in tickers:
-        m = memo.get(t)
-        if m and agora - m["t"] < ttl * 86400:
-            continue
-        try:
-            url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(t + '.SA')}"
-                   f"?range=2y&interval=1mo&events=div")
-            js = json.loads(http_get(url, timeout=15, tentativas=1))
-            ev = ((js["chart"]["result"][0].get("events") or {}).get("dividends") or {})
-            memo[t] = {"t": agora, "d": [(dt.datetime.fromtimestamp(v["date"]).strftime("%Y-%m-%d"), float(v["amount"]))
-                                         for v in ev.values()]}
-        except Exception:  # noqa
-            falhas += 1
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for t, res, fonte, falha in ex.map(um, pend):
+            if res or not falha:
+                memo[t] = {"t": agora, "d": res, "f": fonte}
+            else:
+                falhas += 1
     try:
         pd.to_pickle(memo, arq)
     except Exception:  # noqa
         pass
-    linhas = [(t, d, v) for t in tickers for d, v in sorted((memo.get(t) or {}).get("d", []))]
-    STATUS.append(("proventos", "OK" if falhas == 0 else "PARCIAL", f"{len(linhas)} proventos de {len(tickers)} ativos; {falhas} falhas"))
+    linhas = [(t, d, v, p_) for t in tickers for d, v, p_ in sorted((memo.get(t) or {}).get("d", []))]
+    nf = sum(1 for t in tickers if (memo.get(t) or {}).get("f") == "fundamentus")
+    STATUS.append(("proventos", "OK" if falhas == 0 else "PARCIAL",
+                   f"{len(linhas)} proventos de {len(tickers)} ativos ({nf} via Fundamentus); {falhas} falhas"))
+    print(f"[proventos] {len(linhas)} registros; {nf} de {len(tickers)} ativos via Fundamentus; {falhas} falhas", flush=True)
     return pd.DataFrame(linhas, columns=cols)
 
 
@@ -1690,7 +1746,13 @@ def main():
     try:
         ws = wb.create_sheet("Proventos")
         titulo(ws, "PROVENTOS PAGOS (ativos da carteira, últimos 2 anos)", 3)
-        prov = proventos_lote(sorted(set(meus)))
+        _top = []
+        for _df in (acoes, fiis):
+            try:
+                _top += [str(t) for t in _df.dropna(subset=["Score"]).sort_values("Score", ascending=False)["Ticker"].head(15)]
+            except Exception:  # noqa
+                pass
+        prov = proventos_lote(sorted(set(meus) | set(_top)), set(fiis["Ticker"]))
         if len(prov):
             tabela(ws, 4, prov, {"Valor (R$/cota)": '#,##0.0000'}, filtro=False)
         else:
