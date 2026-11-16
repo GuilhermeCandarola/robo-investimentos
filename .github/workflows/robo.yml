@@ -1,0 +1,80 @@
+name: robo-investimentos
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# nunca duas rodadas ao mesmo tempo
+concurrency:
+  group: robo
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  rodar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TZ: America/Sao_Paulo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements_nuvem.txt
+
+      - name: Bibliotecas
+        run: pip install -r requirements_nuvem.txt
+
+      # estado dos alertas e cache das cotacoes, entre uma rodada e outra
+      - name: Restaurar estado
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            estado.json
+            cache/*.pkl
+          key: robo-estado-${{ github.run_id }}
+          restore-keys: robo-estado-
+
+      - name: Configuracao (a partir dos Secrets)
+        env:
+          CONFIG_INI: ${{ secrets.CONFIG_INI }}
+          GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
+          PASTA_DRIVE_ID: ${{ secrets.PASTA_DRIVE_ID }}
+        run: |
+          printf '%s\n' "$CONFIG_INI" > config.ini
+          printf '%s' "$GOOGLE_SA_JSON" > sa.json
+          chmod 600 config.ini sa.json
+          {
+            echo ""
+            echo "[nuvem]"
+            echo "ativo = sim"
+            echo "pasta_drive_id = $PASTA_DRIVE_ID"
+            echo "credenciais = $PWD/sa.json"
+            echo "pasta_trabalho = $PWD/drive"
+          } >> config.ini
+
+      - name: Rodar o robo
+        run: python nuvem.py
+
+      - name: Guardar estado
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            estado.json
+            cache/*.pkl
+          key: robo-estado-${{ github.run_id }}
+
+      # evita o GitHub desligar o agendamento por inatividade
+      - name: Manter agendamento ativo
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/robo.yml/enable" || true
