@@ -293,7 +293,7 @@ def yahoo_lote(simbolos):
 
 
 def _dle_de_json(js):
-    """Divida liquida / EBITDA a partir do JSON do Yahoo (quoteSummary). None se faltar dado."""
+    """(DL/EBITDA, EBITDA em R$ mi, divida liquida em R$ mi) a partir do JSON do Yahoo. None se faltar dado."""
     fd = js["quoteSummary"]["result"][0]["financialData"]
     raw = lambda k: (fd.get(k) or {}).get("raw")  # noqa
     divida, caixa, ebitda = raw("totalDebt"), raw("totalCash"), raw("ebitda")
@@ -301,19 +301,23 @@ def _dle_de_json(js):
         return None
     liquida = divida - caixa
     if liquida <= 0:
-        return 0.0          # caixa maior que a divida
-    if ebitda <= 0:
-        return 99.0         # tem divida e nao gera EBITDA
-    return liquida / ebitda
+        razao = 0.0         # caixa maior que a divida
+    elif ebitda <= 0:
+        razao = 99.0        # tem divida e nao gera EBITDA
+    else:
+        razao = liquida / ebitda
+    return (razao, ebitda / 1e6, liquida / 1e6)
 
 
 def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
-    """DL/EBITDA por ticker (Yahoo Finance). Guarda em cache e so consulta o que esta vencido,
-    algumas dezenas por rodada. Nunca levanta erro: sem dado, devolve NaN (o criterio e ignorado)."""
+    """DL/EBITDA, EBITDA e divida liquida por ticker (Yahoo Finance), em um DataFrame.
+    Guarda em cache e so consulta o que esta vencido, algumas dezenas por rodada.
+    Nunca levanta erro: sem dado, devolve NaN (o criterio e ignorado)."""
+    cols = ["DLEbitda", "EbitdaMi", "DivLiqMi"]
     if DEMO:
-        return pd.Series(math.nan, index=range(len(tickers)), dtype=float)
+        return pd.DataFrame(math.nan, index=range(len(tickers)), columns=cols)
     CACHE.mkdir(exist_ok=True)
-    arq = CACHE / "dl_ebitda.pkl"
+    arq = CACHE / "dl_ebitda2.pkl"
     try:
         memo = pd.read_pickle(arq) if arq.exists() else {}
     except Exception:  # noqa
@@ -364,10 +368,11 @@ def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
             pd.to_pickle(memo, arq)
         except Exception:  # noqa
             pass
+    linhas = [(memo.get(t) or {}).get("v") or (math.nan,) * 3 for t in tickers]
     tem = sum(1 for t in tickers if (memo.get(t) or {}).get("v") is not None)
     STATUS.append(("dl_ebitda", "OK" if falhas == 0 else "PARCIAL",
                    f"{tem} de {len(tickers)} acoes com dado; {novos} consultadas, {falhas} falhas"))
-    return pd.Series([(memo.get(t) or {}).get("v") for t in tickers], dtype=float)
+    return pd.DataFrame(linhas, columns=cols, dtype=float)
 
 
 def buscar_tesouro():
@@ -1299,7 +1304,9 @@ def main():
         py = y.map(lambda d: d.get("Preco") or math.nan)
         df["Preco"] = py.where(py.notna(), df["Preco"])
     if len(acoes):
-        acoes["DLEbitda"] = dl_ebitda_lote(list(acoes["Ticker"])).values
+        _dl = dl_ebitda_lote(list(acoes["Ticker"]))
+        for _c in _dl.columns:
+            acoes[_c] = _dl[_c].values
     acoes = pontuar_acoes(acoes, cfg) if len(acoes) else acoes
     fiis = pontuar_fiis(fiis, cfg) if len(fiis) else fiis
 
@@ -1754,11 +1761,11 @@ def main():
     aba_mercado("Acoes", f"AÇÕES — {len(acoes)} MAIS LÍQUIDAS DA B3", acoes,
                 {"Preco": "Cotação", "VarDia": "Var. dia", "Min52": "Mín. 52 sem.", "Max52": "Máx. 52 sem.",
                  "PL": "P/L", "PVP": "P/VP", "DY": "DY 12m", "EV_EBIT": "EV/EBIT", "MrgLiq": "Margem líq.",
-                 "ROE": "ROE", "ROIC": "ROIC", "DivLiq_Patrim": "Dív.líq/Patrim.", "DLEbitda": "Dív.líq/EBITDA", "Cresc5a": "Cresc. receita 5a",
+                 "ROE": "ROE", "ROIC": "ROIC", "DivLiq_Patrim": "Dív.líq/Patrim.", "DLEbitda": "Dív.líq/EBITDA", "EbitdaMi": "EBITDA (R$ mi)", "DivLiqMi": "Dív. líquida (R$ mi)", "Cresc5a": "Cresc. receita 5a",
                  "Graham": "Preço justo Graham", "Bazin": "Preço-teto Bazin", "Score": "Score (0-100)",
                  "Liquidez": "Liquidez diária (R$)"},
                 {"Preco": RS, "VarDia": PC, "Min52": RS, "Max52": RS, "PL": N2, "PVP": N2, "DY": PC,
-                 "EV_EBIT": N2, "MrgLiq": PC, "ROE": PC, "ROIC": PC, "DivLiq_Patrim": N2, "DLEbitda": N2, "Cresc5a": PC,
+                 "EV_EBIT": N2, "MrgLiq": PC, "ROE": PC, "ROIC": PC, "DivLiq_Patrim": N2, "DLEbitda": N2, "EbitdaMi": N0, "DivLiqMi": N0, "Cresc5a": PC,
                  "Graham": RS, "Bazin": RS, "Score": '0.0', "Liquidez": N0})
     aba_mercado("FIIs", f"FUNDOS IMOBILIÁRIOS — {len(fiis)} MAIS LÍQUIDOS DA B3", fiis,
                 {"Segmento": "Segmento", "Preco": "Cotação", "VarDia": "Var. dia", "Min52": "Mín. 52 sem.",
