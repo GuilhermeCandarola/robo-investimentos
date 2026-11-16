@@ -77,6 +77,14 @@ PARAMETROS = [
     ("v_div_max", "Ações: dívida líquida ÷ patrimônio acima de", 3, None),
     ("v_pvp_fii", "FIIs: P/VP acima de", 1.15, None),
     ("v_vac_fii", "FIIs: vacância acima de (%)", 20, None),
+    ("sec5", "METAS E LIMITES DE RISCO (Dashboard)", None, None),
+    ("meta_pat", "Meta de patrimônio (R$)", 1000000, "EXEMPLO: troque pela sua meta. Alimenta a seção Meta e progresso do Dashboard."),
+    ("meta_renda", "Meta de renda mensal (R$)", 8000, "EXEMPLO: troque pela sua meta. Renda = rendimento da renda fixa + proventos de ações e FIIs."),
+    ("meta_prazo", "Prazo para a meta (anos)", 10, None),
+    ("meta_ret", "Retorno líquido esperado da carteira (% ao ano)", 10, "Usado só nas contas da meta (aporte mensal necessário e tempo até a meta). É uma hipótese sua, não uma promessa."),
+    ("r_fgc", "Limite de cobertura do FGC por instituição (R$)", 250000, "O FGC cobre até este valor por CPF e por instituição (e R$ 1 milhão a cada 4 anos no total)."),
+    ("r_inst", "Alerta de concentração: % do patrimônio em uma instituição acima de", 50, None),
+    ("r_venc", "Alerta de vencimento: títulos que vencem em até (dias)", 60, None),
 ]
 
 DASH_PERFIL = "B4"      # seletor de perfil no Dashboard
@@ -118,16 +126,16 @@ def fpc(v, dec=1):
 
 
 # colunas das abas de candidatos (usadas na planilha e na ficha do Dashboard)
-FICHA_FMT = {"Cotação": "rs", "Score (0-100)": "n1", "P/L": "n2", "Lucro ÷ preço": "pc", "P/VP": "n2", "DY 12m": "pc",
+FICHA_FMT = {"Cotação": "rs", "Score (0-100)": "n1", "P/L": "n2", "Lucro ÷ preço": "pc", "P/VP": "n2", "DY 12m": "pc", "Rendimento 12m (R$/cota)": "rs",
              "ROE": "pc", "Margem líq.": "pc", "Dív.líq/Patrim.": "n2", "Dív.líq/EBITDA": "n2", "EBITDA (R$ mi)": "n0", "Dív. líquida (R$ mi)": "n0", "Preço justo Graham": "rs", "Margem vs. Graham": "pc",
              "Preço-teto Bazin": "rs", "Liquidez diária (R$)": "n0", "Prêmio sobre IPCA+ (p.p.)": "n1",
              "Vacância": "pc", "Imóveis": "n0"}
-COLS_AC = ["Cotação", "Score (0-100)", "P/L", "Lucro ÷ preço", "P/VP", "DY 12m", "ROE", "Margem líq.", "Dív.líq/Patrim.", "Dív.líq/EBITDA", "EBITDA (R$ mi)", "Dív. líquida (R$ mi)",
+COLS_AC = ["Cotação", "Score (0-100)", "P/L", "Lucro ÷ preço", "P/VP", "DY 12m", "Rendimento 12m (R$/cota)", "ROE", "Margem líq.", "Dív.líq/Patrim.", "Dív.líq/EBITDA", "EBITDA (R$ mi)", "Dív. líquida (R$ mi)",
            "Preço justo Graham", "Margem vs. Graham", "Preço-teto Bazin", "Liquidez diária (R$)"]
 
 
 def cols_fi(cf):
-    return (["Segmento", "Cotação", "Score (0-100)", "DY 12m"]
+    return (["Segmento", "Cotação", "Score (0-100)", "DY 12m", "Rendimento 12m (R$/cota)"]
             + (["Prêmio sobre IPCA+ (p.p.)"] if "Prêmio sobre IPCA+ (p.p.)" in cf.columns else [])
             + ["P/VP", "Vacância", "Imóveis", "Liquidez diária (R$)"])
 
@@ -209,6 +217,11 @@ def ler_painel(caminho):
          "compras": tabela(wb["Compras"], "Data") if "Compras" in wb.sheetnames else pd.DataFrame(),
          "rf_ref": tabela(wb["Renda Fixa"], "Aplicação") if "Renda Fixa" in wb.sheetnames else pd.DataFrame(),
          "atualizado": wb["Painel"]["A2"].value or ""}
+    for chave, aba_, col_ in (("alertas", "Alertas", "Nível"), ("resumo", "Resumo", "Classe"), ("proventos", "Proventos", "Ticker")):
+        try:
+            p[chave] = tabela(wb[aba_], col_) if aba_ in wb.sheetnames else pd.DataFrame()
+        except Exception:  # noqa
+            p[chave] = pd.DataFrame()
     wb.close()
     return p
 
@@ -649,8 +662,13 @@ def construir_dashboard(wb, ctx):
                 pr = m_.iloc[0]
         um, anos = _serie_rf(pr, hoje_rf[i])
         indexador, taxa = _rem_partes(l.get("Remuneração"))
+        _v = l.get("Vencimento")
+        _dias = l.get("Dias p/ vencer")
         linhas_rf.append({"nome": l["Investimento"], "tipo": l.get("Tipo") or "", "idx": indexador, "taxa": taxa,
-                          "hoje": hoje_rf[i], "um": um if um is not None else hoje_rf[i], "anos": anos})
+                          "hoje": hoje_rf[i], "um": um if um is not None else hoje_rf[i], "anos": anos,
+                          "inst": instituicao_de(l["Investimento"], l.get("Tipo")), "fgc": cobre_fgc(l["Investimento"], l.get("Tipo")),
+                          "venc": _v.strftime("%d/%m/%Y") if hasattr(_v, "strftime") else (str(_v) if _v else ""),
+                          "dias": int(_dias) if ok(_dias) else None})
     # linhas de renda variavel
     def bloco_rv(classe):
         out = []
@@ -1101,6 +1119,11 @@ def construir_dashboard(wb, ctx):
     ws.cell(r, 1, ("Notas e retornos são cálculos mecânicos sobre dados públicos e os critérios editáveis da aba Parametros; "
                    "projeções partem do Boletim Focus e podem não se confirmar. " + AVISO)).font = F_NOTA
     dd.sheet_view.showGridLines = True
+    try:
+        extras = construir_extras(wb, ctx, linhas_rf, acoes, fiis, total_rf, total_ac, total_fi)
+    except Exception as e:  # noqa
+        print("[extras] falha:", repr(e)[:200], flush=True)
+        extras = None
     ws.sheet_view.zoomScale = 90
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
@@ -1112,7 +1135,334 @@ def construir_dashboard(wb, ctx):
         "rf": linhas_rf, "ac": acoes, "fi": fiis, "compras": lotes_html,
         "melhores_ac": [list(t) + [tk] for t, tk in zip(mac, tk_ac)], "melhores_fi": [list(t) + [tk] for t, tk in zip(mfi, tk_fi)],
         "melhores_rf": [list(t) for t in mrf], "fichas": fichas,
-        "aviso": AVISO}
+        "x": extras, "aviso": AVISO}
+
+
+# ============================================================ EXTRAS DO DASHBOARD
+# metas, historico e benchmarks, "o que fazer hoje", proventos, mapa de risco
+MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+HIST_COLS = ["Data", "Patrimônio (R$)", "Renda fixa (R$)", "Ações (R$)", "FIIs (R$)", "Aplicado total (R$)",
+             "CDI (% a.a.)", "IPCA 12m (%)", "Ibovespa", "IFIX", "Dólar (R$)"]
+_TIPOS_INST = r"(?:RDB|CDB|LCI|LCA|LC|LF|LIG|CRI|CRA|CDCA|Debênture|Debenture|Poupança|Tesouro(?: \w+)?)"
+
+
+def instituicao_de(nome, tipo=""):
+    """'RDB Nubank (Poupança)' -> 'Nubank'. Titulos do Tesouro -> 'Tesouro Nacional'."""
+    if "tesouro" in str(nome).lower() or "tesouro" in str(tipo).lower():
+        return "Tesouro Nacional"
+    n = re.sub(r"\(.*?\)", "", str(nome)).strip()
+    n = re.sub(rf"^(?:{_TIPOS_INST})\s+", "", n, flags=re.I).strip()
+    return n or str(nome)
+
+
+def cobre_fgc(nome, tipo):
+    t = (str(tipo) + " " + str(nome)).upper()
+    if any(x in t for x in ("TESOURO", "DEBÊNTURE", "DEBENTURE")) or re.search(r"\b(CRI|CRA)\b", t):
+        return False
+    return bool(re.search(r"\b(RDB|CDB|LCI|LCA|LC|LF|POUPAN[CÇ]A)\b", t))
+
+
+def ler_historico(caminho):
+    """Historico diario e fotos do dia anterior, guardados no proprio Plano_de_Acao.xlsx."""
+    linhas, snaps = [], {}
+    try:
+        if Path(caminho).exists():
+            wb = load_workbook(caminho, data_only=True)
+            if "Historico" in wb.sheetnames:
+                for lin in wb["Historico"].iter_rows(min_row=2, max_col=len(HIST_COLS), values_only=True):
+                    if lin[0] and isinstance(lin[1], (int, float)):
+                        linhas.append(list(lin))
+            if "Snapshots" in wb.sheetnames:
+                import json as _j
+                for d, js in wb["Snapshots"].iter_rows(min_row=2, max_col=2, values_only=True):
+                    try:
+                        snaps[str(d)] = _j.loads(js)
+                    except Exception:  # noqa
+                        pass
+            wb.close()
+    except Exception:  # noqa
+        pass
+    return linhas, snaps
+
+
+def _num_or_none(v):
+    return float(v) if ok(v) else None
+
+
+def serie_desempenho(linhas):
+    """Indices base 100: carteira (retorno ponderado pelo tempo, sem contar aportes), CDI, IPCA, Ibovespa, IFIX."""
+    if len(linhas) < 2:
+        return None
+    ds = [dt.date.fromisoformat(str(l[0])[:10]) for l in linhas]
+    cart, cdi, ipca, ibov, ifix = [100.0], [100.0], [100.0], [100.0], [100.0]
+    for i in range(1, len(linhas)):
+        a, b = linhas[i - 1], linhas[i]
+        v0, v1 = _num_or_none(a[1]), _num_or_none(b[1])
+        ap0, ap1 = _num_or_none(a[5]), _num_or_none(b[5])
+        fluxo = (ap1 - ap0) if ap0 is not None and ap1 is not None else 0.0
+        r = ((v1 - fluxo) / v0 - 1) if v0 and v1 is not None else 0.0
+        cart.append(cart[-1] * (1 + r))
+        try:
+            import numpy as _np
+            du = int(_np.busday_count(ds[i - 1], ds[i]))
+        except Exception:  # noqa
+            du = max(0, (ds[i] - ds[i - 1]).days * 5 // 7)
+        c0 = _num_or_none(a[6])
+        cdi.append(cdi[-1] * ((1 + c0 / 100) ** (du / 252) if c0 else 1))
+        i1 = _num_or_none(b[7])
+        ipca.append(ipca[-1] * ((1 + i1 / 100) ** ((ds[i] - ds[i - 1]).days / 365) if i1 else 1))
+        for lst, k in ((ibov, 8), (ifix, 9)):
+            x0, x1 = _num_or_none(a[k]), _num_or_none(b[k])
+            lst.append(lst[-1] * (x1 / x0 if x0 and x1 else 1))
+    return {"datas": [d.strftime("%d/%m") for d in ds], "carteira": cart, "cdi": cdi, "ipca": ipca,
+            "ibov": ibov, "ifix": ifix, "patrimonio": [_num_or_none(l[1]) for l in linhas],
+            "aplicado": [_num_or_none(l[5]) for l in linhas], "inicio": ds[0].strftime("%d/%m/%Y")}
+
+
+def calendario_proventos(p_prov, ativos, hoje):
+    """Proximos 12 meses de proventos: o que cada ativo pagou nos ultimos 12 meses x quantidade atual.
+    Cada item traz o dia estimado (data 'com' do ano passado, repetida neste ano)."""
+    meses = []
+    y, m = hoje.year, hoje.month
+    for i in range(12):
+        meses.append((y + (m - 1 + i) // 12, (m - 1 + i) % 12 + 1))
+    tot = {k: {} for k in meses}          # mes -> ticker -> [valor, [dias]]
+    usou_dy = []
+
+    def soma(k, tk, v, dia):
+        d = tot[k].setdefault(tk, [0.0, []])
+        d[0] += v
+        if dia and dia not in d[1]:
+            d[1].append(dia)
+    for a in ativos:
+        tk, qtd = a["tk"], a["qtd"]
+        ev = []
+        if p_prov is not None and not p_prov.empty:
+            sub = p_prov[p_prov["Ticker"] == tk]
+            for d_, v_ in zip(sub["Data"], sub["Valor (R$/cota)"]):
+                try:
+                    d0 = dt.date.fromisoformat(str(d_)[:10])
+                except ValueError:
+                    continue
+                if (hoje - d0).days <= 365 and d0 <= hoje:
+                    ev.append((d0, float(v_)))
+        if ev:
+            mensal = len({(d.year, d.month) for d, _ in ev}) >= 9
+            if mensal:
+                med = sum(v for _, v in ev) / 12
+                dias = sorted(d.day for d, _ in ev)
+                dia = dias[len(dias) // 2]
+                for k in meses:
+                    soma(k, tk, med * qtd, dia)
+            else:
+                for d, v in ev:
+                    k = (d.year + 1, d.month)
+                    if k in tot:
+                        soma(k, tk, v * qtd, d.day)
+        elif a.get("anual"):
+            for k in meses:
+                soma(k, tk, a["anual"] / 12, None)
+            usou_dy.append(tk)
+    cal = []
+    for k, v in tot.items():
+        itens = [[t, x[0], "/".join(f"{d:02d}" for d in sorted(x[1])) + f"/{k[1]:02d}" if x[1] else ""]
+                 for t, x in sorted(v.items(), key=lambda z: -z[1][0])]
+        cal.append({"mes": f"{MESES[k[1] - 1]}/{str(k[0])[2:]}", "total": sum(x[0] for x in v.values()), "itens": itens})
+    return cal, usou_dy
+
+
+def construir_extras(wb, ctx, linhas_rf, acoes, fiis, total_rf, total_ac, total_fi):
+    import json as _j
+    p, par = ctx["p"], ctx["par"]
+    m = p["macro"]
+    hoje = AGORA.date()
+    pat = total_rf + total_ac + total_fi
+    sinais, destino = ctx.get("sinais", []), ctx["destino"]
+    ca, cf = ctx["ca"], ctx["cf"]
+
+    # ---------- aplicado total (para separar aporte de rentabilidade)
+    aplicado = None
+    try:
+        rs = p.get("resumo")
+        if rs is not None and not rs.empty:
+            lt = rs[rs["Classe"].astype(str).str.upper() == "TOTAL"]
+            if len(lt):
+                aplicado = float(lt.iloc[0]["Investido (R$)"])
+    except Exception:  # noqa
+        pass
+    if aplicado is None:
+        aplicado = pat
+
+    # ---------- historico
+    hist, snaps = ler_historico(destino)
+    iso = hoje.isoformat()
+    nova = [iso, pat, total_rf, total_ac, total_fi, aplicado, m.get("CDI (% a.a.)"), m.get("IPCA 12 meses (%)"),
+            m.get("Ibovespa (pontos)"), m.get("IFIX (pontos)"), m.get("Dólar comercial (R$)")]
+    ant_hist = [l for l in hist if str(l[0])[:10] < iso]
+    hist = [l for l in hist if str(l[0])[:10] != iso] + [nova]
+    hist = sorted(hist, key=lambda l: str(l[0]))[-800:]
+    desempenho = serie_desempenho(hist)
+
+    # ---------- fotos (mudancas desde ontem)
+    aprov_ac = [str(t) for t in ca[ca["_todos"]]["Ticker"]] if not ca.empty else []
+    aprov_fi = [str(t) for t in cf[cf["_todos"]]["Ticker"]] if not cf.empty else []
+    al_df = p.get("alertas")
+    alertas_hoje = [str(a) for a in al_df["Alerta"]] if al_df is not None and not al_df.empty else []
+    snap = {"aprov_ac": aprov_ac, "aprov_fi": aprov_fi, "sinais": {s["Ativo"]: s["Sinal"] for s in sinais},
+            "alertas": alertas_hoje, "selic": m.get("Selic meta (% a.a.)"), "cdi": m.get("CDI (% a.a.)"),
+            "dolar": m.get("Dólar comercial (R$)"), "ibov": m.get("Ibovespa (pontos)")}
+    snaps[iso] = snap
+    datas_ant = sorted(d for d in snaps if d < iso)
+    prev = snaps.get(datas_ant[-1]) if datas_ant else None
+    prev_data = datas_ant[-1] if datas_ant else None
+
+    mud = []
+    if ant_hist:
+        a = ant_hist[-1]
+        dif = pat - (a[1] or 0)
+        fl = aplicado - (a[5] or 0)
+        rent = dif - fl
+        d_ant = dt.date.fromisoformat(str(a[0])[:10]).strftime("%d/%m")
+        txt = f"Patrimônio {'subiu' if dif >= 0 else 'caiu'} R$ {fbr(abs(dif))} desde {d_ant}"
+        if abs(fl) >= 0.01:
+            txt += f" (aportes/resgates de R$ {fbr(fl)}; rentabilidade de R$ {fbr(rent)})"
+        mud.append(txt + ".")
+    if prev:
+        for tk in aprov_ac + aprov_fi:
+            if tk not in prev.get("aprov_ac", []) + prev.get("aprov_fi", []):
+                mud.append(f"{tk} passou a atender a todos os critérios de compra.")
+        for tk in prev.get("aprov_ac", []) + prev.get("aprov_fi", []):
+            if tk not in aprov_ac + aprov_fi:
+                mud.append(f"{tk} deixou de atender a todos os critérios.")
+        for tk, s in snap["sinais"].items():
+            s0 = prev.get("sinais", {}).get(tk)
+            if s0 and s0 != s:
+                mud.append(f"Sinal de {tk} mudou de {s0} para {s}.")
+        for t in alertas_hoje:
+            if t not in prev.get("alertas", []):
+                mud.append("Alerta novo: " + t)
+        for k, rot in (("selic", "Selic meta"), ("cdi", "CDI")):
+            if ok(snap.get(k)) and ok(prev.get(k)) and abs(snap[k] - prev[k]) >= 0.005:
+                mud.append(f"{rot} foi de {fbr(prev[k])}% para {fbr(snap[k])}% a.a.")
+        if ok(snap.get("dolar")) and ok(prev.get("dolar")) and prev["dolar"]:
+            v = snap["dolar"] / prev["dolar"] - 1
+            if abs(v) >= 0.01:
+                mud.append(f"Dólar {'subiu' if v > 0 else 'caiu'} {fbr(abs(v) * 100, 1)}% (R$ {fbr(prev['dolar'], 4)} → R$ {fbr(snap['dolar'], 4)}).")
+    base_txt = (f"Comparado com a leitura de {dt.date.fromisoformat(prev_data).strftime('%d/%m/%Y')}." if prev_data
+                else "Primeira leitura guardada: as comparações começam amanhã.")
+
+    # ---------- gravacao nas abas Historico / Snapshots (do Plano_de_Acao.xlsx)
+    wh = wb.create_sheet("Historico")
+    for j, c in enumerate(HIST_COLS, 1):
+        cel = wh.cell(1, j, c)
+        cel.font, cel.fill = F_CAB, AZUL
+        wh.column_dimensions[get_column_letter(j)].width = 18
+    for i, l in enumerate(hist, 2):
+        for j, v in enumerate(l, 1):
+            cel = wh.cell(i, j, v if not (isinstance(v, float) and math.isnan(v)) else None)
+            cel.font = F_N
+            if j > 1:
+                cel.number_format = N2 if j >= 7 else RS
+    wh.freeze_panes = "A2"
+    wh.cell(len(hist) + 3, 1, "Uma linha por dia, gravada pelo robô (o último valor do dia vale). Não edite: alimenta o gráfico de desempenho do Dashboard.").font = F_NOTA
+    ws_ = wb.create_sheet("Snapshots")
+    ws_.cell(1, 1, "Data").font = F_B
+    ws_.cell(1, 2, "Foto do dia (JSON, usada para 'o que mudou desde ontem')").font = F_B
+    ws_.column_dimensions["B"].width = 80
+    for i, d in enumerate(sorted(snaps)[-45:], 2):
+        ws_.cell(i, 1, d)
+        ws_.cell(i, 2, _j.dumps(snaps[d], ensure_ascii=False, default=float)[:30000])
+
+    # ---------- metas
+    meta = {"pat": float(par.get("meta_pat") or 0), "renda": float(par.get("meta_renda") or 0),
+            "prazo": float(par.get("meta_prazo") or 0), "ret": float(par.get("meta_ret") or 0)}
+
+    # ---------- proventos
+    ativos = [x for x in acoes + fiis if x["qtd"] > 0]
+    cal, usou_dy = calendario_proventos(p.get("proventos"), ativos, hoje)
+    prov12 = sum(c["total"] for c in cal)
+    rf_mes = sum(((x["anos"][0] - x["hoje"]) / 12) for x in linhas_rf) if linhas_rf else 0.0
+
+    # ---------- risco
+    inst = {}
+    for x in linhas_rf:
+        k = x["inst"]
+        d = inst.setdefault(k, {"inst": k, "valor": 0.0, "fgc": x["fgc"], "itens": []})
+        d["valor"] += x["hoje"]
+        d["itens"].append(x["nome"])
+        d["fgc"] = d["fgc"] and x["fgc"]
+    for x in acoes + fiis:
+        inst.setdefault("Corretora (ações e FIIs)", {"inst": "Corretora (ações e FIIs)", "valor": 0.0, "fgc": None, "itens": []})
+        inst["Corretora (ações e FIIs)"]["valor"] += x["val"]
+    limite = float(par.get("r_fgc") or 250000)
+    inst_l = sorted(inst.values(), key=lambda d: -d["valor"])
+    idx = {}
+    for x in linhas_rf:
+        idx[x["idx"]] = idx.get(x["idx"], 0) + x["hoje"]
+    if total_ac:
+        idx["Ações"] = total_ac
+    if total_fi:
+        idx["FIIs"] = total_fi
+    venc = {"Sem vencimento (liquidez diária)": 0.0, "Até 30 dias": 0.0, "31 a 90 dias": 0.0, "91 dias a 1 ano": 0.0, "Mais de 1 ano": 0.0}
+    prox_venc = []
+    for x in linhas_rf:
+        d = x.get("dias")
+        if d is None:
+            venc["Sem vencimento (liquidez diária)"] += x["hoje"]
+        else:
+            k = "Até 30 dias" if d <= 30 else "31 a 90 dias" if d <= 90 else "91 dias a 1 ano" if d <= 365 else "Mais de 1 ano"
+            venc[k] += x["hoje"]
+            if d <= float(par.get("r_venc") or 60):
+                prox_venc.append((x["nome"], x["venc"], d, x["hoje"]))
+    venc["Sem vencimento (liquidez diária)"] += total_ac + total_fi
+    pesos = sorted([[x["tk"], x["val"] / pat if pat else 0] for x in acoes + fiis], key=lambda t: -t[1])
+    risco = {"inst": [{"inst": d["inst"], "valor": d["valor"], "peso": d["valor"] / pat if pat else 0, "fgc": d["fgc"],
+                       "excesso": max(0.0, d["valor"] - limite) if d["fgc"] else 0.0, "itens": d["itens"]} for d in inst_l],
+             "limite_fgc": limite, "idx": [[k, v] for k, v in sorted(idx.items(), key=lambda t: -t[1])],
+             "venc": [[k, v] for k, v in venc.items()], "pesos": pesos[:8], "conc_max": float(par.get("conc_max") or 10),
+             "inst_max": float(par.get("r_inst") or 50)}
+
+    # ---------- o que fazer hoje
+    hj = []
+    if al_df is not None and not al_df.empty:
+        for n, t in zip(al_df["Nível"], al_df["Alerta"]):
+            if str(n).upper() == "ALTO":
+                hj.append({"n": "alta", "t": "Alerta alto", "d": str(t)})
+    for s in sinais:
+        if s["Sinal"] in ("VENDER", "REDUZIR"):
+            hj.append({"n": "alta", "t": f"{s['Sinal'].capitalize()} {s['Ativo']} (sinal pelos seus critérios)", "d": s["Motivo"]})
+    for nome, v, d, val in prox_venc:
+        hj.append({"n": "alta" if d <= 15 else "media", "t": f"{nome} vence em {d} dia(s)", "d": f"Vencimento {v}, R$ {fbr(val)}. Decida o que fazer com o dinheiro."})
+    for d in inst_l:
+        if d["fgc"] and d["valor"] > limite:
+            hj.append({"n": "alta", "t": f"{d['inst']}: R$ {fbr(d['valor'] - limite)} acima da cobertura do FGC",
+                       "d": f"R$ {fbr(d['valor'])} na instituição; o FGC cobre até R$ {fbr(limite, 0)} por CPF e por instituição."})
+        elif pat and d["inst"] != "Tesouro Nacional" and d["valor"] / pat * 100 > risco["inst_max"] and len(inst_l) > 1:
+            hj.append({"n": "media", "t": f"{fbr(d['valor'] / pat * 100, 0)}% do patrimônio em {d['inst']}",
+                       "d": f"Limite de atenção: {risco['inst_max']:g}%. Concentração em uma só instituição é risco de crédito."})
+    if al_df is not None and not al_df.empty:
+        med = [str(t) for n, t in zip(al_df["Nível"], al_df["Alerta"]) if str(n).upper() != "ALTO"]
+        if med:
+            hj.append({"n": "media", "t": f"{len(med)} alerta(s) de atenção no painel", "d": " · ".join(med[:3]) + (" …" if len(med) > 3 else "")})
+    alvo = ctx.get("alvo") or {}
+    atual = ctx.get("atual") or {}
+    if alvo and pat:
+        faltas = [(c, alvo[c] / 100 * pat - atual.get(c, 0)) for c in ("Renda Fixa", "Ações", "FIIs")]
+        grandes = [(c, f) for c, f in faltas if f > 0 and f / pat > 0.02]
+        if grandes:
+            hj.append({"n": "info", "t": f"Distância até o alvo do perfil {ctx['perfil']}",
+                       "d": "; ".join(f"faltam R$ {fbr(f, 0)} em {c}" for c, f in grandes) + ". O próximo aporte pode ir para essas classes."})
+    n_ok = len(aprov_ac) + len(aprov_fi)
+    if n_ok:
+        hj.append({"n": "info", "t": f"{len(aprov_ac)} ação(ões) e {len(aprov_fi)} FII(s) atendem a todos os critérios",
+                   "d": "Mais bem colocados: " + ", ".join((aprov_ac[:2] + aprov_fi[:2])) + ". Veja a ficha e confirme antes de decidir."})
+    prox = next((c for c in cal[:2] if c["total"] > 0), None)
+    if prox:
+        hj.append({"n": "info", "t": f"Proventos esperados em {prox['mes']}: R$ {fbr(prox['total'])}",
+                   "d": "Estimativa pelos pagamentos dos últimos 12 meses × quantidade atual."})
+    return {"meta": meta, "hist": desempenho, "mud": mud, "mud_base": base_txt, "hoje": hj, "prov": cal, "prov12": prov12,
+            "prov_dy": usou_dy, "rf_mes": rf_mes, "risco": risco, "aplicado": aplicado, "dolar": m.get("Dólar comercial (R$)"),
+            "n_hist": len(hist)}
 
 
 # ------------------------------------------------------------ dashboard em pagina web
@@ -1161,8 +1511,8 @@ const HR=D.horizontes;
 const $=s=>document.querySelector(s);
 const fmt=(v,d=2)=>(v==null||isNaN(v))?'n/d':Number(v).toLocaleString('pt-BR',{minimumFractionDigits:d,maximumFractionDigits:d});
 const R=v=>'R$ '+fmt(v);const P=(v,d=1)=>fmt(v*100,d)+'%';
-let S={aporte:D.aporte,perfil:D.perfil,rf_card:'2 anos',dv_card:'2 anos',rf_tab:'12 meses',ac_tab:'12 meses',fi_tab:'12 meses'};
-try{const o=JSON.parse(localStorage.getItem('dash_sel')||'{}');for(const k in o)if(k in S&&(k=='perfil'?D.alvos[o[k]]:k=='aporte'?(typeof o[k]=='number'&&o[k]>=0):HR.includes(o[k])))S[k]=o[k];}catch(e){}
+let S={aporte:D.aporte,perfil:D.perfil,rf_card:'2 anos',dv_card:'2 anos',rf_tab:'12 meses',ac_tab:'12 meses',fi_tab:'12 meses',pmt:null};
+try{const o=JSON.parse(localStorage.getItem('dash_sel')||'{}');for(const k in o)if(k in S&&(k=='perfil'?D.alvos[o[k]]:(k=='aporte'||k=='pmt')?(typeof o[k]=='number'&&o[k]>=0):HR.includes(o[k])))S[k]=o[k];}catch(e){}
 const save=()=>{try{localStorage.setItem('dash_sel',JSON.stringify(S))}catch(e){}};
 const hi=r=>HR.indexOf(r);const anos=r=>hi(r)==0?1:hi(r)+1;
 const fator=r=>{const n=anos(r),g=D.div_cresc/100;return g==0?n:(Math.pow(1+g,n)-1)/g};
@@ -1185,6 +1535,83 @@ function lotesHTML(){
  if(!D.compras.length)return '<div class="vazio">Nenhuma operação registrada ainda. Lance cada compra na aba Compras de Minha_Carteira.xlsx: o robô calcula o preço médio e mostra o histórico aqui.</div>';
  const rows=D.compras.map(x=>`<tr><td>${x.data}</td><td>${x.nome}</td><td>${x.tk}</td><td>${x.cart}</td><td>${x.tipo}</td><td class="r">${fmt(x.qtd,0)}</td><td class="r">${fmt(x.preco)}</td><td class="r">${fmt(x.taxas)}</td><td class="r">${fmt(x.valor)}</td><td class="r">${x.cot==null?'':fmt(x.cot)}</td><td class="r" ${cor(x.res)}>${x.res==null?'':fmt(x.res)}</td><td class="r" ${cor(x.pct)}>${x.pct==null?'':P(x.pct)}</td></tr>`).join('');
  return `<div class="sc"><table><thead><tr><th>Data</th><th>Empresa / fundo</th><th>Ticker</th><th>Carteira</th><th>Tipo</th><th class="r">Quantidade</th><th class="r">Preço unitário (R$)</th><th class="r">Taxas (R$)</th><th class="r">Valor da operação (R$)</th><th class="r">Cotação atual (R$)</th><th class="r">Resultado (R$)</th><th class="r">Resultado (%)</th></tr></thead><tbody>${rows}</tbody></table></div>`}
+const X=D.x||null;
+const NIV={alta:['#C0392B','Prioridade'],media:['#D68910','Atenção'],info:['#3B5BDB','Informativo']};
+const itens=l=>l.map(x=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--bar)"><span style="flex:0 0 auto;align-self:flex-start;font-size:11px;font-weight:700;color:#fff;background:${NIV[x.n][0]};border-radius:99px;padding:2px 10px">${NIV[x.n][1]}</span><div><b>${x.t}</b><div class="mu" style="margin-top:2px;font-size:13px">${x.d}</div></div></div>`).join('');
+function lineSVG(series,labels,fy,h=250){const w=780,pl=56,pr=14,pt=12,pb=26,n=labels.length;
+ const all=series.flatMap(s=>s.v.filter(x=>x!=null));if(!all.length)return '';let mn=Math.min(...all),mx=Math.max(...all);if(mx-mn<1e-9){mn-=1;mx+=1}
+ const gx=i=>pl+(n<2?0:i*(w-pl-pr)/(n-1)),gy=v=>pt+(h-pt-pb)*(1-(v-mn)/(mx-mn));
+ const rg=mx-mn,dc=rg<0.05?3:rg<0.5?2:1;let g='';for(let k=0;k<=4;k++){const v=mn+(mx-mn)*k/4,y=gy(v);g+=`<line x1="${pl}" x2="${w-pr}" y1="${y}" y2="${y}" stroke="currentColor" opacity=".12"/><text x="${pl-6}" y="${y+4}" text-anchor="end" font-size="11" fill="currentColor" opacity=".6">${fy(v,dc)}</text>`}
+ const passo=Math.max(1,Math.ceil(n/7));let xl='';for(let i=0;i<n;i+=passo)xl+=`<text x="${gx(i)}" y="${h-6}" text-anchor="${i>=n-passo&&n>7?'end':'middle'}" font-size="11" fill="currentColor" opacity=".6">${labels[i]}</text>`;
+ const ln=series.map(s=>{const pts=s.v.map((v,i)=>v==null?null:`${gx(i).toFixed(1)},${gy(v).toFixed(1)}`).filter(Boolean);
+  return n==1?`<circle cx="${gx(0)}" cy="${gy(s.v[0])}" r="4" fill="${s.c}"/>`:`<polyline points="${pts.join(' ')}" fill="none" stroke="${s.c}" stroke-width="${s.w||2.2}" ${s.d?'stroke-dasharray="6 4"':''} stroke-linejoin="round"/>`}).join('');
+ const lg=series.map(s=>`<span style="margin-right:16px;white-space:nowrap"><i style="display:inline-block;width:14px;height:3px;background:${s.c};margin-right:6px;vertical-align:middle"></i>${s.n}</span>`).join('');
+ return `<div class="mu" style="margin-top:10px">${lg}</div><svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;margin-top:6px" role="img" aria-label="Gráfico de linhas">${g}${xl}${ln}</svg>`}
+function barH(rot,v,max,cor,dir,marca){return `<div style="margin-top:12px"><div class="bh"><b>${rot}</b><span>${dir}</span></div><div class="bar"><b style="width:${Math.max(1,Math.min(100,max?v/max*100:0))}%;background:${cor}"></b>${marca!=null?`<span class="mk" style="left:${Math.min(100,marca)}%"></span>`:''}</div></div>`}
+function secHoje(c){if(!X)return '';let l=[...X.hoje];
+ if(c.AP>0){const t=c.nomes.map((n,i)=>c.dest[i]>0?`${R(c.dest[i])} em ${n}`:'').filter(Boolean).join(', ');l.unshift({n:'alta',t:`Aporte de ${R(c.AP)} para distribuir`,d:t?`Pelo alvo do perfil ${S.perfil}: ${t}.`:'Todas as classes já estão no alvo; nada a direcionar.'})}
+ const mud=X.mud.length?X.mud.map(m=>`<div style="padding:7px 0;border-bottom:1px solid var(--bar)">• ${m}</div>`).join(''):'<div class="vazio">Sem mudanças relevantes desde a última leitura.</div>';
+ return `<section class="row"><div class="card big" style="flex:1 1 620px"><h3>O que fazer hoje</h3><div class="mu">Sinais mecânicos pelos seus critérios e limites (aba Parametros), em ordem de prioridade. Não é recomendação de investimento.</div>${l.length?itens(l):'<div class="vazio">Nada urgente hoje. Carteira dentro dos limites que você definiu.</div>'}</div>
+ <div class="card big" style="flex:1 1 380px"><h3>O que mudou desde ontem</h3><div class="mu">${X.mud_base}</div><div style="margin-top:8px;font-size:13px">${mud}</div></div></section>`}
+let MT={};try{MT=JSON.parse(localStorage.getItem('dash_meta')||'{}')||{}}catch(e){}
+const metaEf=()=>{const b=X.meta,o=k=>(typeof MT[k]=='number'&&MT[k]>=0)?MT[k]:b[k];return {pat:o('pat'),renda:o('renda'),prazo:o('prazo'),ret:o('ret')}};
+const brIn=v=>Number(v||0).toFixed(2).replace('.',',');
+const parseBR=t=>{const s=String(t).trim().replace(/\s/g,'').replace(/\./g,'').replace(',','.');return parseFloat(s)};
+const inMeta=(id,v)=>`<input id="mt_${id}" type="text" inputmode="decimal" value="${id=='pat'?brIn(v):v}" style="font:inherit;font-weight:600;width:${id=='pat'?'150':'70'}px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)">`;
+function secMeta(c){if(!X)return '';const M=metaEf();
+ const i=M.ret>0?Math.pow(1+M.ret/100,1/12)-1:0,n=Math.round(M.prazo*12);
+ const fv=c.pat*Math.pow(1+i,n);const pmt=(n>0&&i>0&&M.pat>0)?Math.max(0,(M.pat-fv)*i/(Math.pow(1+i,n)-1)):0;
+ const rendaAt=X.rf_mes+X.prov12/12;const pPat=M.pat>0?c.pat/M.pat:0,pRen=M.renda>0?rendaAt/M.renda:0;
+ const anosSem=(c.pat>0&&M.pat>c.pat&&M.ret>0)?Math.log(M.pat/c.pat)/Math.log(1+M.ret/100):0;
+ const patNec=M.ret>0?M.renda*12/(M.ret/100):null;
+ const pm=S.pmt==null?Math.round(pmt/10)*10:S.pmt;
+ const ser=[],lab=[],alvo=[];const anosN=Math.max(1,Math.ceil(M.prazo));for(let a=0;a<=anosN;a++){const k=a*12;lab.push(a==0?'hoje':a+(a==1?' ano':' anos'));ser.push(c.pat*Math.pow(1+i,k)+(i>0?pm*(Math.pow(1+i,k)-1)/i:pm*k));alvo.push(M.pat)}
+ const fim=ser[ser.length-1];
+ return `<section class="card big"><h3>Meta e progresso</h3><div class="mu" style="margin-top:8px;line-height:2.2">Patrimônio-alvo (R$): ${inMeta('pat',M.pat)} &nbsp; Prazo (anos): ${inMeta('prazo',M.prazo)} ${Object.keys(MT).length?'<button id="mt_rst" style="font:inherit;cursor:pointer;margin-left:8px">Voltar aos valores da planilha</button>':''}</div><div class="mu">Digite e tecle Enter: o cálculo muda na hora e fica salvo neste navegador. A planilha (aba Parametros, seção Metas) é o ponto de partida e não muda por aqui.</div>
+ <div class="row" style="margin-top:6px">
+  <div style="flex:1 1 320px">${barH('Patrimônio',pPat,1,'var(--rf)',`${R(c.pat)} de ${R(M.pat)} · ${P(pPat)}`)}
+  <div class="mu" style="margin-top:12px;line-height:1.6">Sem novos aportes, no retorno de ${fmt(M.ret,1)}% ao ano, o patrimônio chegaria à meta em <b>${anosSem>0?fmt(anosSem,1)+' anos':'—'}</b>.</div></div>
+  <div style="flex:1 1 320px"><div class="card" style="margin:0"><div class="l">Aporte mensal necessário para chegar a ${R(M.pat)} em ${fmt(M.prazo,0)} anos</div><div class="v">${R(pmt)}</div><div class="s">por mês, a ${fmt(M.ret,1)}% ao ano líquido</div></div>
+  <div class="mu" style="margin-top:10px">Simular aporte mensal (R$): <input id="pmt" type="text" inputmode="decimal" value="${brIn(pm)}" style="font:inherit;font-weight:600;width:120px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)"> em ${fmt(M.prazo,0)} anos: <b>${R(fim)}</b> (${fim>=M.pat?'meta atingida':'faltam '+R(M.pat-fim)})</div></div></div>
+ ${lineSVG([{n:'Patrimônio projetado com o aporte simulado',c:'#0B5D57',v:ser},{n:'Meta',c:'#C0392B',v:alvo,d:1,w:1.6}],lab,v=>fmt(v/1000,0)+' mil')}</section>`}
+function secDesemp(){if(!X)return '';const H=X.hist;
+ if(!H)return `<section class="card big"><h3>Desempenho e comparação com o mercado</h3><div class="vazio">O robô começou a guardar o histórico diário da carteira agora. O gráfico (carteira × CDI × IPCA × Ibovespa × IFIX) aparece a partir do segundo dia e fica mais útil a cada semana.</div></section>`;
+ const u=a=>a[a.length-1],r=a=>u(a)/100-1;const cdi=r(H.cdi);
+ const linhas=[['Sua carteira',H.carteira],['CDI',H.cdi],['IPCA (inflação)',H.ipca],['Ibovespa',H.ibov],['IFIX',H.ifix]].map(x=>`<tr><td>${x[0]}</td><td class="r" ${cor(r(x[1]))}>${P(r(x[1]),2)}</td><td class="r">${cdi>0.00005?fmt(r(x[1])/cdi*100,0)+'% do CDI':'—'}</td></tr>`).join('');
+ return `<section class="card big"><h3>Desempenho e comparação com o mercado</h3><div class="mu">Desde ${H.inicio}. A carteira é medida pela rentabilidade, sem contar o dinheiro novo que você aportou. Índices em base 100.</div>
+ ${lineSVG([{n:'Sua carteira',c:'#0B5D57',v:H.carteira,w:3},{n:'CDI',c:'#7F8C8D',v:H.cdi},{n:'IPCA',c:'#C96A12',v:H.ipca},{n:'Ibovespa',c:'#3B5BDB',v:H.ibov},{n:'IFIX',c:'#8E44AD',v:H.ifix}],H.datas,(v,d)=>fmt(v,d))}
+ <table><thead><tr><th>Comparação no período</th><th class="r">Retorno</th><th class="r">Frente ao CDI</th></tr></thead><tbody>${linhas}</tbody></table></section>`}
+function secProv(){if(!X)return '';const C=X.prov,mx=Math.max(...C.map(c=>c.total),1);
+ const bars=C.map(c=>`<div style="flex:1;min-width:46px;text-align:center"><div style="height:120px;display:flex;align-items:flex-end;justify-content:center"><div title="${R(c.total)}" style="width:70%;background:var(--ac);border-radius:5px 5px 0 0;height:${Math.max(2,c.total/mx*100)}%"></div></div><div style="font-size:11px;margin-top:4px;font-weight:600">${fmt(c.total,2)}</div><div class="mu" style="font-size:11px">${c.mes}</div></div>`).join('');
+ const rows=C.filter(c=>c.total>0).map(c=>`<tr><td>${c.mes}</td><td>${c.itens.map(i=>i[0]+' '+fmt(i[1],2)+(i[2]?' <span class="mu">(dia '+i[2]+')</span>':'')).join(' · ')}</td><td class="r"><b>${fmt(c.total,2)}</b></td></tr>`).join('');
+ return `<section class="card big"><h3>Calendário de proventos e renda passiva</h3><div class="mu">Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é a \"data ex\" do ano passado (a partir dela o ativo negocia sem direito ao provento); o dinheiro costuma cair na conta de 1 a 15 dias depois, conforme o comunicado da empresa/fundo. Confirme no comunicado oficial.</div>
+ <div class="row" style="margin-top:12px"><div class="card"><div class="l">Proventos em 12 meses</div><div class="v">${R(X.prov12)}</div><div class="s">média de ${R(X.prov12/12)} por mês</div></div>
+ <div class="card"><div class="l">Rendimento mensal da renda fixa</div><div class="v">${R(X.rf_mes)}</div><div class="s">líquido de IR, estimativa</div></div>
+ <div class="card"><div class="l">Renda mensal total</div><div class="v" style="color:var(--rf)">${R(X.rf_mes+X.prov12/12)}</div><div class="s">renda fixa + proventos</div></div></div>
+ <div style="display:flex;gap:4px;margin-top:16px;overflow-x:auto">${bars}</div>
+ ${rows?`<div class="sc"><table><thead><tr><th>Mês</th><th>Por ativo (R$) e data estimada</th><th class="r">Total (R$)</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="vazio">Nenhum provento esperado: sem ações/FIIs na carteira ou sem histórico de pagamento.</div>'}
+ ${X.prov_dy.length?`<div class="mu" style="margin-top:8px">${X.prov_dy.join(', ')}: sem histórico de pagamentos na fonte; valor estimado pelo dividend yield, dividido igualmente nos meses.</div>`:''}</section>`}
+function secRisco(){if(!X)return '';const K=X.risco,L=K.limite_fgc;
+ const maxI=Math.max(...K.inst.map(d=>d.valor),L,1);
+ const ins=K.inst.map(d=>{const f=d.fgc===null?'sem FGC (ações e FIIs ficam na custódia da B3)':d.fgc?(d.excesso>0?`<span style="color:#C0392B;font-weight:700">R$ ${fmt(d.excesso,0)} acima do FGC</span>`:`dentro do FGC (${P(d.valor/L,0)} do limite)`):'sem cobertura do FGC';
+  return barH(d.inst,d.valor,maxI,d.excesso>0?'#C0392B':'var(--rf)',`${R(d.valor)} · ${P(d.peso,d.peso<0.1?1:0)} do patrimônio`,d.fgc?Math.min(100,L/maxI*100):null)+`<div class="mu" style="margin-top:3px">${f}</div>`}).join('');
+ const maxX=Math.max(...K.idx.map(x=>x[1]),1),tot=K.idx.reduce((a,x)=>a+x[1],0)||1;
+ const idx=K.idx.map(x=>barH(x[0],x[1],maxX,'var(--ac)',`${R(x[1])} · ${P(x[1]/tot,x[1]/tot<0.1?1:0)}`)).join('');
+ const mxv=Math.max(...K.venc.map(x=>x[1]),1);const ven=K.venc.map(x=>barH(x[0],x[1],mxv,'var(--fi)',`${R(x[1])}`)).join('');
+ const pe=K.pesos.length?K.pesos.map(x=>barH(x[0],x[1],Math.max(K.conc_max/100*1.5,x[1]),x[1]*100>K.conc_max?'#C0392B':'var(--ac)',`${P(x[1],1)} do patrimônio`,K.conc_max/100/Math.max(K.conc_max/100*1.5,x[1])*100)).join(''):'<div class="vazio">Sem ações ou FIIs na carteira.</div>';
+ return `<section class="row"><div class="card big" style="flex:1 1 520px"><h3>Concentração por instituição e FGC</h3><div class="mu">Marcador = limite do FGC (${R(L)} por instituição). Se uma instituição quebrar, o FGC devolve até esse valor por CPF.</div>${ins}</div>
+ <div class="card big" style="flex:1 1 340px"><h3>Por tipo de rendimento</h3><div class="mu">Dependência de juros (CDI/Selic), inflação (IPCA), prefixado e bolsa</div>${idx}</div>
+ <div class="card big" style="flex:1 1 340px"><h3>Quando o dinheiro fica disponível</h3><div class="mu">Renda fixa por vencimento; ações e FIIs vendem em D+2</div>${ven}</div>
+ <div class="card big" style="flex:1 1 340px"><h3>Peso de cada ação/FII</h3><div class="mu">Marcador = limite de ${fmt(K.conc_max,0)}% por ativo (aba Parametros)</div>${pe}</div></section>`}
+let USD={v:X?X.dolar:null,live:false,pct:null,ts:null};
+function updUSD(){const e=document.getElementById('usd');if(!e)return;
+ if(USD.v==null){e.innerHTML='';return}
+ const hh=USD.ts?USD.ts.toLocaleTimeString('pt-BR'):'';const pat=window.__pat||0;
+ e.innerHTML=`<div class="l">Dólar ${USD.live?'<span style="color:#1E8449">● ao vivo</span>':'<span class="mu">(último valor do robô)</span>'}</div><div class="v" style="font-size:22px">R$ ${fmt(USD.v,4)}${USD.pct!=null&&!isNaN(USD.pct)?` <span style="font-size:13px" ${cor(USD.pct)}>${USD.pct>=0?'+':''}${fmt(USD.pct,2)}%</span>`:''}</div><div class="s">${USD.live?`${USD.src} · ${hh}`:''}${pat?` · patrimônio ≈ US$ ${fmt(pat/USD.v,0)}`:''}</div>`}
+async function pegaUSD(){
+ try{const r=await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL',{cache:'no-store'});const u=(await r.json()).USDBRL;USD={v:parseFloat(u.bid),pct:parseFloat(u.pctChange),ts:new Date(),live:true,src:'AwesomeAPI'};}
+ catch(e){try{const r=await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=BRL');const j=await r.json();USD={v:j.rates.BRL,pct:null,ts:new Date(),live:true,src:'BCE (valor diário)'};}catch(e2){}}
+ updUSD()}
 function render(){
  const rf=D.rf,ac=D.ac,fi=D.fi,sum=(l,k)=>l.reduce((a,x)=>a+(x[k]||0),0);
  const totRF=sum(rf,'hoje'),totAC=sum(ac,'val'),totFI=sum(fi,'val'),totRV=totAC+totFI,pat=totRF+totRV;
@@ -1193,6 +1620,7 @@ function render(){
  const al=D.alvos[S.perfil]||[0,0,0];const vals=[totRF,totAC,totFI],nomes=['Renda fixa','Ações','FIIs'],cores=['var(--rf)','var(--ac)','var(--fi)'];
  const AP=S.aporte;const base=pat+AP;const falta=al.map((a,i)=>a/100*base-vals[i]);const pos=falta.reduce((a,x)=>a+(x>0?x:0),0);
  const dest=falta.map(x=>(AP>0&&x>0&&pos>0)?AP*x/pos:0);
+ window.__pat=pat;const CX={AP,dest,nomes,pat};
  const alocBars=nomes.map((n,i)=>`<div style="margin-top:14px"><div class="bh"><b>${n}</b><span>${P(pat?vals[i]/pat:0)} hoje · alvo ${fmt(al[i],1)}%</span></div><div class="bar" style="height:14px"><b style="width:${Math.min(100,pat?vals[i]/pat*100:0)}%;background:${cores[i]};height:14px"></b><span class="mk" style="left:${al[i]}%"></span></div></div>`).join('');
  const alocTab=nomes.map((n,i)=>`<tr><td>${n}</td><td class="r">${falta[i]>0?R(falta[i]):'acima do alvo'}</td><td class="r"><b>${R(dest[i])}</b></td></tr>`).join('');
  const rfRows=rf.map(x=>`<tr><td>${x.nome}</td><td>${x.tipo}</td><td>${x.idx}</td><td>${x.taxa}</td><td class="r">${fmt(x.hoje)}</td><td class="r">${fmt(x.um)}</td><td class="r">${fmt(x.anos[hi(S.rf_tab)])}</td></tr>`).join('');
@@ -1203,7 +1631,8 @@ function render(){
  $('#app').innerHTML=`
  <header class="row" style="align-items:flex-end;justify-content:space-between"><div><div class="kick">PLANO DE AÇÃO · DASHBOARD</div><h1>Visão geral da carteira</h1>
  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="mu" style="font-size:13px;font-weight:600">Perfil de risco</label>${sel('perfil',Object.keys(D.alvos))}<span class="mu">Aqui vale só para esta tela. O perfil da planilha continua o que está no Excel (${D.perfil}).</span></div></div>
- <div class="mu">Dados de ${D.gerado}. A página se recarrega sozinha a cada 5 minutos.</div></header>
+ <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end"><div class="card" id="usd" style="flex:0 0 auto;min-width:230px"></div><div class="mu">Dados de ${D.gerado}. A página se recarrega sozinha a cada 5 minutos.</div></div></header>
+ ${secHoje(CX)}
  <section class="row"><div class="card"><div class="l">Patrimônio total</div><div class="v">${R(pat)}</div><div class="s">${P(pat?totRF/pat:0)} renda fixa · ${P(pat?totRV/pat:0)} renda variável</div></div></section>
  <section class="row">
   <div class="card"><div class="l">Renda fixa</div><div class="v" style="color:var(--rf)">${R(totRF)}</div><div class="s">${rf.length} aplicação(ões) · líquido estimado</div></div>
@@ -1215,8 +1644,9 @@ function render(){
   <div class="card"><div class="l">Dividendos estimados: próximo mês</div><div class="v">${R(dMes)}</div><div class="s">média mensal (ações pagam em parcelas irregulares)</div></div>
   <div class="card"><div class="l">Dividendos estimados: próximos 12 meses</div><div class="v">${R(dAno)}</div><div class="s">${P(totRV?dAno/totRV:0)} sobre o valor atual</div></div>
   <div class="card"><div class="l">Dividendos estimados: próximos ${sel('dv_card',HR)}</div><div class="v">${R(dN)}</div><div class="s">soma acumulada; crescimento anual de ${fmt(D.div_cresc,1)}%</div></div></section>
+ ${secMeta(CX)}
  <section class="row"><div class="card big" style="flex:1 1 620px"><h3>Alocação atual × alvo do perfil ${S.perfil}</h3><div class="mu">Barra cheia = hoje · marcador vertical = alvo</div>${alocBars}</div>
-  <div class="card big" style="flex:1 1 380px"><h3>Destino do aporte de ${R(AP)}</h3><div class="mu" style="margin-top:6px">Aporte (R$): <input id="ap" type="number" min="0" step="100" value="${AP}" style="font:inherit;font-weight:600;width:130px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)"> vale só para esta tela; no Excel (${R(D.aporte)}) mude no Dashboard.</div><table><thead><tr><th>Classe</th><th class="r">Falta para o alvo</th><th class="r">Aporte</th></tr></thead><tbody>${alocTab}</tbody></table></div></section>
+  <div class="card big" style="flex:1 1 380px"><h3>Destino do aporte de ${R(AP)}</h3><div class="mu" style="margin-top:6px">Aporte (R$): <input id="ap" type="text" inputmode="decimal" value="${brIn(AP)}" style="font:inherit;font-weight:600;width:130px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)"> vale só para esta tela; no Excel (${R(D.aporte)}) mude no Dashboard.</div><table><thead><tr><th>Classe</th><th class="r">Falta para o alvo</th><th class="r">Aporte</th></tr></thead><tbody>${alocTab}</tbody></table></div></section>
  <h2>1 · Minha carteira atual</h2>
  <section class="card big"><h3>Renda fixa</h3><div class="mu">dados reais · valores líquidos de IR, estimados</div>${rfBlock}</section>
  <section class="card big"><h3>Renda variável: ações</h3>${tabRV(ac,'ac_tab','ações')}</section>
@@ -1227,8 +1657,16 @@ function render(){
   <div class="card big" style="flex:1 1 360px"><h3>Ações · nota de 0 a 100</h3><div class="mu">Os que mais atendem aos critérios da aba Parametros · clique para ver a ficha completa</div>${barras(D.melhores_ac,'var(--ac)',v=>fmt(v*100,1),'ac')}</div>
   <div class="card big" style="flex:1 1 360px"><h3>Fundos imobiliários · nota de 0 a 100</h3><div class="mu">Os que mais atendem aos critérios da aba Parametros · clique para ver a ficha completa</div>${barras(D.melhores_fi,'var(--fi)',v=>fmt(v*100,1),'fi')}</div>
   <div class="card big" style="flex:1 1 360px"><h3>Renda fixa · retorno líquido ao ano</h3><div class="mu">Prazo de 1 a 2 anos, após IR</div>${barras(D.melhores_rf,'var(--rf)',v=>P(v,2))}</div></section>
+ <h2>3 · Desempenho e proventos</h2>
+ ${secDesemp()}${secProv()}
+ <h2>4 · Mapa de risco</h2>
+ ${secRisco()}
  <footer class="aviso">${D.aviso}</footer>`;
- const ap=document.getElementById('ap');if(ap)ap.addEventListener('change',()=>{const v=parseFloat(ap.value);S.aporte=(isNaN(v)||v<0)?0:v;save();render()});
+ updUSD();
+ ['pat','prazo'].forEach(k=>{const e=document.getElementById('mt_'+k);if(e)e.addEventListener('change',()=>{const v=parseBR(e.value);if(!isNaN(v)&&v>=0){MT[k]=v;try{localStorage.setItem('dash_meta',JSON.stringify(MT))}catch(x){}render()}})});
+ const mr=document.getElementById('mt_rst');if(mr)mr.addEventListener('click',()=>{MT={};try{localStorage.removeItem('dash_meta')}catch(x){}render()});
+ const pi=document.getElementById('pmt');if(pi)pi.addEventListener('change',()=>{const v=parseBR(pi.value);S.pmt=(isNaN(v)||v<0)?0:v;save();render()});
+ const ap=document.getElementById('ap');if(ap)ap.addEventListener('change',()=>{const v=parseBR(ap.value);S.aporte=(isNaN(v)||v<0)?0:v;save();render()});
  document.querySelectorAll('select[data-k]').forEach(e=>e.addEventListener('change',()=>{S[e.dataset.k]=e.value;save();render()}));
 }
 function ficha(k){const f=D.fichas[k];if(!f)return;const tk=k.split(':')[1];
@@ -1245,6 +1683,7 @@ function ficha(k){const f=D.fichas[k];if(!f)return;const tk=k.split(':')[1];
  document.addEventListener('keydown',esc);clearTimeout(window.__rl);document.body.appendChild(ov)}
 document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('.clk');if(t)ficha(t.dataset.f)});
 render();
+if(!/[?&]pdf=1/.test(location.search)){pegaUSD();setInterval(pegaUSD,30000)}
 if(/[?&]pdf=1/.test(location.search)){
  /* modo PDF: uma unica pagina continua, sem cortes; sem recarregar */
  document.body.style.background='#fff';
@@ -1367,6 +1806,10 @@ def gerar(pasta, arq_painel=None):
         ca["Lucro ÷ preço"] = ca["P/L"].map(lambda x: 1 / x if ok(x) and x > 0 else None)
         ca["Margem vs. Graham"] = [(g / c - 1) if ok(g) and ok(c) and c else None
                                    for g, c in zip(ca["Preço justo Graham"], ca["Cotação"])]
+    for _df in (ca, cf):
+        if not _df.empty:
+            _df["Rendimento 12m (R$/cota)"] = [float(d) * float(c) if ok(d) and ok(c) else None
+                                                for d, c in zip(_df["DY 12m"], _df["Cotação"])]
     if not cf.empty and ipca_mais is not None:
         cf["Prêmio sobre IPCA+ (p.p.)"] = cf["DY 12m"].map(lambda x: (x - ipca_mais) * 100 if ok(x) else None)
 
@@ -1618,14 +2061,14 @@ def gerar(pasta, arq_painel=None):
 
     aba("Candidatos Acoes", "AÇÕES — MAIS PRÓXIMAS DOS SEUS CRITÉRIOS (40 primeiras)", ca,
         COLS_AC,
-        {"Cotação": RS, "Score (0-100)": "0.0", "P/L": N2, "Lucro ÷ preço": PC, "P/VP": N2, "DY 12m": PC, "ROE": PC, "Margem líq.": PC,
+        {"Cotação": RS, "Score (0-100)": "0.0", "P/L": N2, "Lucro ÷ preço": PC, "P/VP": N2, "DY 12m": PC, "Rendimento 12m (R$/cota)": RS, "ROE": PC, "Margem líq.": PC,
          "Dív.líq/Patrim.": N2, "Dív.líq/EBITDA": N2, "EBITDA (R$ mi)": N0, "Dív. líquida (R$ mi)": N0, "Preço justo Graham": RS, "Margem vs. Graham": PC, "Preço-teto Bazin": RS,
          "Liquidez diária (R$)": N0},
         f"Régua de mercado: lucro ÷ preço precisa superar {fpc(juro_real, 2) if juro_real is not None else 'n/d'} "
         f"(Tesouro IPCA+) mais {par['a_premio']:g} p.p. de prêmio.")
     aba("Candidatos FIIs", "FIIs — MAIS PRÓXIMOS DOS SEUS CRITÉRIOS (40 primeiros)", cf,
         cols_fi(cf),
-        {"Cotação": RS, "Score (0-100)": "0.0", "DY 12m": PC, "Prêmio sobre IPCA+ (p.p.)": "0.0", "P/VP": N2,
+        {"Cotação": RS, "Score (0-100)": "0.0", "DY 12m": PC, "Rendimento 12m (R$/cota)": RS, "Prêmio sobre IPCA+ (p.p.)": "0.0", "P/VP": N2,
          "Vacância": PC, "Imóveis": N0, "Liquidez diária (R$)": N0},
         f"Régua de mercado: DY precisa superar {fpc(ipca_mais, 2) if ipca_mais is not None else 'n/d'} "
         f"(Tesouro IPCA+) mais {par['f_premio']:g} p.p. de prêmio.")
@@ -1684,7 +2127,8 @@ def gerar(pasta, arq_painel=None):
     w.add_data_validation(dv2)
     dv2.add(f"B{pm['perfil']}")
     dados_html = construir_dashboard(wb, {"p": p, "par": par, "pm": pm, "dash_in": dash_in, "perfil": perfil, "h_aloc": h,
-                             "ca": ca, "cf": cf, "cdi": cdi, "ipca_mais": ipca_mais, "ipca_fut": ipca_fut})
+                             "ca": ca, "cf": cf, "cdi": cdi, "ipca_mais": ipca_mais, "ipca_fut": ipca_fut,
+                             "sinais": sinais, "destino": destino, "alvo": alvo, "atual": atual})
     wb.active = 0
     for i, w_ in enumerate(wb.worksheets):
         w_.sheet_view.tabSelected = (i == 0)

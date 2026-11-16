@@ -377,6 +377,42 @@ def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
     return pd.DataFrame(linhas, columns=cols, dtype=float)
 
 
+def proventos_lote(tickers, ttl=1):
+    """Proventos pagos nos ultimos ~2 anos (Yahoo Finance, events=div), so dos ativos da carteira.
+    Devolve DataFrame Ticker, Data, Valor (R$ por acao/cota). Cache de 1 dia; nunca levanta erro."""
+    cols = ["Ticker", "Data", "Valor (R$/cota)"]
+    if DEMO or not tickers:
+        return pd.DataFrame(columns=cols)
+    CACHE.mkdir(exist_ok=True)
+    arq = CACHE / "proventos1.pkl"
+    try:
+        memo = pd.read_pickle(arq) if arq.exists() else {}
+    except Exception:  # noqa
+        memo = {}
+    agora = time.time()
+    falhas = 0
+    for t in tickers:
+        m = memo.get(t)
+        if m and agora - m["t"] < ttl * 86400:
+            continue
+        try:
+            url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(t + '.SA')}"
+                   f"?range=2y&interval=1mo&events=div")
+            js = json.loads(http_get(url, timeout=15, tentativas=1))
+            ev = ((js["chart"]["result"][0].get("events") or {}).get("dividends") or {})
+            memo[t] = {"t": agora, "d": [(dt.datetime.fromtimestamp(v["date"]).strftime("%Y-%m-%d"), float(v["amount"]))
+                                         for v in ev.values()]}
+        except Exception:  # noqa
+            falhas += 1
+    try:
+        pd.to_pickle(memo, arq)
+    except Exception:  # noqa
+        pass
+    linhas = [(t, d, v) for t in tickers for d, v in sorted((memo.get(t) or {}).get("d", []))]
+    STATUS.append(("proventos", "OK" if falhas == 0 else "PARCIAL", f"{len(linhas)} proventos de {len(tickers)} ativos; {falhas} falhas"))
+    return pd.DataFrame(linhas, columns=cols)
+
+
 def buscar_tesouro():
     CACHE.mkdir(exist_ok=True)
     arq = CACHE / "tesouro.csv"
@@ -1649,6 +1685,18 @@ def main():
         ws.freeze_panes = "A5"
     except Exception as e:  # noqa
         log.warning("Resumo: %s", e)
+
+    # --------------------------------------------------------------- Proventos
+    try:
+        ws = wb.create_sheet("Proventos")
+        titulo(ws, "PROVENTOS PAGOS (ativos da carteira, últimos 2 anos)", 3)
+        prov = proventos_lote(sorted(set(meus)))
+        if len(prov):
+            tabela(ws, 4, prov, {"Valor (R$/cota)": '#,##0.0000'}, filtro=False)
+        else:
+            ws["A4"] = "Sem proventos encontrados (ou fonte indisponível nesta atualização)."
+    except Exception as e:  # noqa
+        log.warning("Proventos: %s", e)
 
     # ---------------------------------------------------------------- Alertas
     ws = wb.create_sheet("Alertas")
