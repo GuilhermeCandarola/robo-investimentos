@@ -363,6 +363,7 @@ def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
                         falhas += 1
         except Exception as e:  # noqa
             log.warning("DL/EBITDA (Yahoo) indisponivel: %s", e)
+            print(f"[dl_ebitda] Yahoo indisponivel: {str(e)[:150]}", flush=True)
             falhas = len(pend)
         try:
             pd.to_pickle(memo, arq)
@@ -372,6 +373,7 @@ def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
     tem = sum(1 for t in tickers if (memo.get(t) or {}).get("v") is not None)
     STATUS.append(("dl_ebitda", "OK" if falhas == 0 else "PARCIAL",
                    f"{tem} de {len(tickers)} acoes com dado; {novos} consultadas, {falhas} falhas"))
+    print(f"[dl_ebitda] {tem} de {len(tickers)} acoes com dado; {novos} consultadas, {falhas} falhas", flush=True)
     return pd.DataFrame(linhas, columns=cols, dtype=float)
 
 
