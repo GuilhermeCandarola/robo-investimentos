@@ -24,6 +24,7 @@ import os
 import re
 import smtplib
 import sys
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -289,6 +290,84 @@ def yahoo_lote(simbolos):
     if not out:
         raise ValueError("Yahoo Finance indisponivel")
     return out
+
+
+def _dle_de_json(js):
+    """Divida liquida / EBITDA a partir do JSON do Yahoo (quoteSummary). None se faltar dado."""
+    fd = js["quoteSummary"]["result"][0]["financialData"]
+    raw = lambda k: (fd.get(k) or {}).get("raw")  # noqa
+    divida, caixa, ebitda = raw("totalDebt"), raw("totalCash"), raw("ebitda")
+    if divida is None or caixa is None or ebitda is None:
+        return None
+    liquida = divida - caixa
+    if liquida <= 0:
+        return 0.0          # caixa maior que a divida
+    if ebitda <= 0:
+        return 99.0         # tem divida e nao gera EBITDA
+    return liquida / ebitda
+
+
+def dl_ebitda_lote(tickers, max_novos=40, ttl_ok=7, ttl_nd=3):
+    """DL/EBITDA por ticker (Yahoo Finance). Guarda em cache e so consulta o que esta vencido,
+    algumas dezenas por rodada. Nunca levanta erro: sem dado, devolve NaN (o criterio e ignorado)."""
+    if DEMO:
+        return pd.Series(math.nan, index=range(len(tickers)), dtype=float)
+    CACHE.mkdir(exist_ok=True)
+    arq = CACHE / "dl_ebitda.pkl"
+    try:
+        memo = pd.read_pickle(arq) if arq.exists() else {}
+    except Exception:  # noqa
+        memo = {}
+    agora = time.time()
+
+    def vencido(t):
+        m = memo.get(t)
+        if not m:
+            return True
+        return agora - m["t"] > (ttl_ok if m["v"] is not None else ttl_nd) * 86400
+
+    pend = [t for t in tickers if vencido(t)][:max_novos]
+    novos = falhas = 0
+    if pend:
+        try:
+            sess = requests.Session()
+            sess.headers.update({"User-Agent": UA})
+            try:
+                sess.get("https://fc.yahoo.com", timeout=10)
+            except Exception:  # noqa
+                pass
+            crumb = sess.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=10).text.strip()
+            if not crumb or "<" in crumb or len(crumb) > 40:
+                raise ValueError("crumb invalido")
+
+            def um(t):
+                try:
+                    r = sess.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{t}.SA",
+                                 params={"modules": "financialData", "crumb": crumb}, timeout=15)
+                    if r.status_code == 404:
+                        return t, None, True      # ticker sem dados: nao e falha de rede
+                    r.raise_for_status()
+                    return t, _dle_de_json(r.json()), True
+                except Exception:  # noqa
+                    return t, None, False
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                for t, v, ok_ in ex.map(um, pend):
+                    if ok_:
+                        memo[t] = {"v": v, "t": agora}
+                        novos += 1
+                    else:
+                        falhas += 1
+        except Exception as e:  # noqa
+            log.warning("DL/EBITDA (Yahoo) indisponivel: %s", e)
+            falhas = len(pend)
+        try:
+            pd.to_pickle(memo, arq)
+        except Exception:  # noqa
+            pass
+    tem = sum(1 for t in tickers if (memo.get(t) or {}).get("v") is not None)
+    STATUS.append(("dl_ebitda", "OK" if falhas == 0 else "PARCIAL",
+                   f"{tem} de {len(tickers)} acoes com dado; {novos} consultadas, {falhas} falhas"))
+    return pd.Series([(memo.get(t) or {}).get("v") for t in tickers], dtype=float)
 
 
 def buscar_tesouro():
@@ -1219,6 +1298,8 @@ def main():
         df["Max52"] = y.map(lambda d: d.get("Max52") or math.nan)
         py = y.map(lambda d: d.get("Preco") or math.nan)
         df["Preco"] = py.where(py.notna(), df["Preco"])
+    if len(acoes):
+        acoes["DLEbitda"] = dl_ebitda_lote(list(acoes["Ticker"])).values
     acoes = pontuar_acoes(acoes, cfg) if len(acoes) else acoes
     fiis = pontuar_fiis(fiis, cfg) if len(fiis) else fiis
 
@@ -1673,11 +1754,11 @@ def main():
     aba_mercado("Acoes", f"AÇÕES — {len(acoes)} MAIS LÍQUIDAS DA B3", acoes,
                 {"Preco": "Cotação", "VarDia": "Var. dia", "Min52": "Mín. 52 sem.", "Max52": "Máx. 52 sem.",
                  "PL": "P/L", "PVP": "P/VP", "DY": "DY 12m", "EV_EBIT": "EV/EBIT", "MrgLiq": "Margem líq.",
-                 "ROE": "ROE", "ROIC": "ROIC", "DivLiq_Patrim": "Dív.líq/Patrim.", "Cresc5a": "Cresc. receita 5a",
+                 "ROE": "ROE", "ROIC": "ROIC", "DivLiq_Patrim": "Dív.líq/Patrim.", "DLEbitda": "Dív.líq/EBITDA", "Cresc5a": "Cresc. receita 5a",
                  "Graham": "Preço justo Graham", "Bazin": "Preço-teto Bazin", "Score": "Score (0-100)",
                  "Liquidez": "Liquidez diária (R$)"},
                 {"Preco": RS, "VarDia": PC, "Min52": RS, "Max52": RS, "PL": N2, "PVP": N2, "DY": PC,
-                 "EV_EBIT": N2, "MrgLiq": PC, "ROE": PC, "ROIC": PC, "DivLiq_Patrim": N2, "Cresc5a": PC,
+                 "EV_EBIT": N2, "MrgLiq": PC, "ROE": PC, "ROIC": PC, "DivLiq_Patrim": N2, "DLEbitda": N2, "Cresc5a": PC,
                  "Graham": RS, "Bazin": RS, "Score": '0.0', "Liquidez": N0})
     aba_mercado("FIIs", f"FUNDOS IMOBILIÁRIOS — {len(fiis)} MAIS LÍQUIDOS DA B3", fiis,
                 {"Segmento": "Segmento", "Preco": "Cotação", "VarDia": "Var. dia", "Min52": "Mín. 52 sem.",

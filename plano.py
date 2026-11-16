@@ -55,6 +55,7 @@ PARAMETROS = [
     ("a_roe_min", "ROE mínimo (%)", 12, None),
     ("a_div_max", "Dívida líquida ÷ patrimônio máxima", 1.5, None),
     ("a_mrg_min", "Margem líquida mínima (%)", 10, "A margem líquida precisa ser MAIOR que este valor."),
+    ("a_dle_max", "Dívida líquida ÷ EBITDA máxima", 3, "Precisa ser MENOR que este valor. Se o Yahoo Finance não tiver o dado da empresa, este critério é ignorado nela."),
     ("a_dy_min", "Dividend yield mínimo (%)", 4, None),
     ("a_dy_max", "Dividend yield máximo (%)", 18, "Filtro contra armadilhas: DY muito alto costuma vir de dividendo extraordinário, que não se repete."),
     ("a_pl_min", "P/L mínimo", 3, "P/L muito baixo costuma vir de lucro não recorrente (venda de ativo, efeito contábil)."),
@@ -118,10 +119,10 @@ def fpc(v, dec=1):
 
 # colunas das abas de candidatos (usadas na planilha e na ficha do Dashboard)
 FICHA_FMT = {"Cotação": "rs", "Score (0-100)": "n1", "P/L": "n2", "Lucro ÷ preço": "pc", "P/VP": "n2", "DY 12m": "pc",
-             "ROE": "pc", "Margem líq.": "pc", "Dív.líq/Patrim.": "n2", "Preço justo Graham": "rs", "Margem vs. Graham": "pc",
+             "ROE": "pc", "Margem líq.": "pc", "Dív.líq/Patrim.": "n2", "Dív.líq/EBITDA": "n2", "Preço justo Graham": "rs", "Margem vs. Graham": "pc",
              "Preço-teto Bazin": "rs", "Liquidez diária (R$)": "n0", "Prêmio sobre IPCA+ (p.p.)": "n1",
              "Vacância": "pc", "Imóveis": "n0"}
-COLS_AC = ["Cotação", "Score (0-100)", "P/L", "Lucro ÷ preço", "P/VP", "DY 12m", "ROE", "Margem líq.", "Dív.líq/Patrim.",
+COLS_AC = ["Cotação", "Score (0-100)", "P/L", "Lucro ÷ preço", "P/VP", "DY 12m", "ROE", "Margem líq.", "Dív.líq/Patrim.", "Dív.líq/EBITDA",
            "Preço justo Graham", "Margem vs. Graham", "Preço-teto Bazin", "Liquidez diária (R$)"]
 
 
@@ -387,6 +388,7 @@ def avaliar_acao(l, par, juro_real):
         (f"P/VP até {par['a_pvp_max']:g}", ok(l.get("P/VP")) and 0 < l["P/VP"] <= par["a_pvp_max"]),
         (f"ROE mín. {par['a_roe_min']:g}%", ok(l.get("ROE")) and l["ROE"] * 100 >= par["a_roe_min"]),
         (f"Margem líq. > {par['a_mrg_min']:g}%", ok(l.get("Margem líq.")) and l["Margem líq."] * 100 > par["a_mrg_min"]),
+        (f"Dív.líq/EBITDA < {par['a_dle_max']:g}", (not ok(l.get("Dív.líq/EBITDA"))) or l["Dív.líq/EBITDA"] < par["a_dle_max"]),
         (f"Dívida até {par['a_div_max']:g}x", (not ok(l.get("Dív.líq/Patrim."))) or l["Dív.líq/Patrim."] <= par["a_div_max"]),
         (f"DY entre {par['a_dy_min']:g}% e {par['a_dy_max']:g}%",
          ok(l.get("DY 12m")) and par["a_dy_min"] <= l["DY 12m"] * 100 <= par["a_dy_max"]),
@@ -1617,7 +1619,7 @@ def gerar(pasta, arq_painel=None):
     aba("Candidatos Acoes", "AÇÕES — MAIS PRÓXIMAS DOS SEUS CRITÉRIOS (40 primeiras)", ca,
         COLS_AC,
         {"Cotação": RS, "Score (0-100)": "0.0", "P/L": N2, "Lucro ÷ preço": PC, "P/VP": N2, "DY 12m": PC, "ROE": PC, "Margem líq.": PC,
-         "Dív.líq/Patrim.": N2, "Preço justo Graham": RS, "Margem vs. Graham": PC, "Preço-teto Bazin": RS,
+         "Dív.líq/Patrim.": N2, "Dív.líq/EBITDA": N2, "Preço justo Graham": RS, "Margem vs. Graham": PC, "Preço-teto Bazin": RS,
          "Liquidez diária (R$)": N0},
         f"Régua de mercado: lucro ÷ preço precisa superar {fpc(juro_real, 2) if juro_real is not None else 'n/d'} "
         f"(Tesouro IPCA+) mais {par['a_premio']:g} p.p. de prêmio.")
