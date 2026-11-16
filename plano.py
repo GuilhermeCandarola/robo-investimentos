@@ -1417,6 +1417,23 @@ def construir_extras(wb, ctx, linhas_rf, acoes, fiis, total_rf, total_ac, total_
     prov12 = sum(c["total"] for c in cal)
     rf_mes = sum(((x["anos"][0] - x["hoje"]) / 12) for x in linhas_rf) if linhas_rf else 0.0
 
+    # ---------- renda fixa mes a mes (rendimento liquido estimado, curva do cenario Focus)
+    rf_cal = []
+    ym = [(hoje.year + (hoje.month - 1 + i) // 12, (hoje.month - 1 + i) % 12 + 1) for i in range(12)]
+    for i, (yy, mm) in enumerate(ym, 1):
+        itens = []
+        for x in linhas_rf:
+            h0, a12 = x["hoje"], x["anos"][0]
+            g = (a12 / h0) ** (1 / 12) if h0 > 0 and a12 > 0 else 1.0
+            ini, fim = h0 * g ** (i - 1), h0 * g ** i
+            venc = ""
+            if x.get("dias") is not None and 0 <= x["dias"] <= 365:
+                dv = hoje + dt.timedelta(days=x["dias"])
+                if (dv.year, dv.month) == (yy, mm):
+                    venc = dv.strftime("%d/%m/%Y")
+            itens.append([x["nome"], fim - ini, fim, venc])
+        rf_cal.append({"mes": f"{MESES[mm - 1]}/{str(yy)[2:]}", "total": sum(t[1] for t in itens), "itens": itens})
+
     # ---------- risco
     inst = {}
     for x in linhas_rf:
@@ -1495,7 +1512,7 @@ def construir_extras(wb, ctx, linhas_rf, acoes, fiis, total_rf, total_ac, total_
         hj.append({"n": "info", "t": f"Proventos esperados em {prox['mes']}: R$ {fbr(prox['total'])}",
                    "d": "Estimativa pelos pagamentos dos últimos 12 meses × quantidade atual."})
     return {"meta": meta, "hist": desempenho, "mud": mud, "mud_base": base_txt, "hoje": hj, "prov": cal, "prov12": prov12,
-            "prov_dy": usou_dy, "rf_mes": rf_mes, "risco": risco, "aplicado": aplicado, "dolar": m.get("Dólar comercial (R$)"),
+            "prov_dy": usou_dy, "rf_mes": rf_mes, "rf_cal": rf_cal, "risco": risco, "aplicado": aplicado, "dolar": m.get("Dólar comercial (R$)"),
             "n_hist": len(hist)}
 
 
@@ -1618,14 +1635,14 @@ function secDesemp(){if(!X)return '';const H=X.hist;
 function secProv(){if(!X)return '';const C=X.prov,mx=Math.max(...C.map(c=>c.total),1);
  const bars=C.map(c=>`<div class="clm" data-m="${C.indexOf(c)}" title="Clique para ver as datas e valores de ${c.mes}" style="flex:1;min-width:46px;text-align:center;cursor:pointer"><div style="height:120px;display:flex;align-items:flex-end;justify-content:center"><div title="${R(c.total)}" style="width:70%;background:var(--ac);border-radius:5px 5px 0 0;height:${Math.max(2,c.total/mx*100)}%"></div></div><div style="font-size:11px;margin-top:4px;font-weight:600">${fmt(c.total,2)}</div><div class="mu" style="font-size:11px">${c.mes}</div></div>`).join('');
  const rows=C.filter(c=>c.total>0).map(c=>`<tr class="clm" data-m="${C.indexOf(c)}" style="cursor:pointer" title="Clique para detalhar"><td>${c.mes} ›</td><td>${c.itens.map(i=>i[0]+' '+fmt(i[1],2)+(i[2]?' <span class="mu">(dia '+i[2]+')</span>':'')).join(' · ')}</td><td class="r"><b>${fmt(c.total,2)}</b></td></tr>`).join('');
- return `<section class="card big"><h3>Calendário de proventos e renda passiva</h3><div class="mu">Clique em uma barra para ver as datas e os valores do mês. Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é o dia de pagamento do ano passado repetido neste ano, quando a fonte (Fundamentus) informa; sem isso, é a data ex, e o dinheiro cai alguns dias depois. Datas podem mudar: confirme no comunicado oficial.</div>
+ return `<section class="card big"><h3>Proventos de ações e FIIs (renda variável)</h3><div class="mu">Clique em uma barra para ver as datas e os valores do mês. Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é o dia de pagamento do ano passado repetido neste ano, quando a fonte (Fundamentus) informa; sem isso, é a data ex, e o dinheiro cai alguns dias depois. Datas podem mudar: confirme no comunicado oficial.</div>
  <div class="row" style="margin-top:12px"><div class="card"><div class="l">Proventos em 12 meses</div><div class="v">${R(X.prov12)}</div><div class="s">média de ${R(X.prov12/12)} por mês</div></div>
  <div class="card"><div class="l">Rendimento mensal da renda fixa</div><div class="v">${R(X.rf_mes)}</div><div class="s">líquido de IR, estimativa</div></div>
  <div class="card"><div class="l">Renda mensal total</div><div class="v" style="color:var(--rf)">${R(X.rf_mes+X.prov12/12)}</div><div class="s">renda fixa + proventos</div></div></div>
  <div style="display:flex;gap:4px;margin-top:16px;overflow-x:auto">${bars}</div>
  ${C.some(c=>c.total>0)?'':'<div class="vazio">Nenhum provento esperado: sem ações/FIIs na carteira ou sem histórico de pagamento.</div>'}
  ${X.prov_dy.length?`<div class="mu" style="margin-top:8px">${X.prov_dy.join(', ')}: sem histórico de pagamentos na fonte; valor estimado pelo dividend yield, dividido igualmente nos meses.</div>`:''}</section>`}
-function provMes(i){const c=X.prov[i];if(!c)return;
+function provMes(i,t){if(t=='rf')return rfMes(i);const c=X.prov[i];if(!c)return;
  const linhas=[];c.itens.forEach(it=>it[3].forEach(d=>linhas.push({tk:it[0],...d})));
  const ord=x=>{const m=/^(\d\d)\//.exec(x.data);return m?+m[1]:99};linhas.sort((a,b)=>ord(a)-ord(b));
  const rows=linhas.map(x=>`<tr><td><b>${x.data}</b></td><td>${x.tk}</td><td class="r">${fmt(x.cota,4)}</td><td class="r">${fmt(x.qtd,0)}</td><td class="r"><b>${R(x.total)}</b></td></tr>`).join('');
@@ -1633,6 +1650,21 @@ function provMes(i){const c=X.prov[i];if(!c)return;
  ov.innerHTML=`<div class="mo" role="dialog" style="max-width:860px"><div class="mh"><div><h3>Proventos de ${c.mes}</h3><div class="mu" style="margin-top:4px">${linhas.length} pagamento(s) previsto(s) · total ${R(c.total)}</div></div><button class="mx" aria-label="Fechar">×</button></div>
  <div style="padding:6px 22px 4px" class="sc">${linhas.length?`<table><thead><tr><th>Data</th><th>Ativo</th><th class="r">Valor por cota/ação (R$)</th><th class="r">Quantidade</th><th class="r">Total (R$)</th></tr></thead><tbody>${rows}<tr class="t"><td>Total do mês</td><td></td><td></td><td></td><td class="r">${R(c.total)}</td></tr></tbody></table>`:'<div class="vazio">Nenhum provento previsto neste mês.</div>'}</div>
  <div class="aviso" style="padding:8px 22px 18px">Estimativa baseada nos pagamentos dos últimos 12 meses repetidos neste ano, vezes a sua quantidade atual. Datas e valores reais dependem do comunicado de cada empresa ou fundo.</div></div>`;
+ const fecha=()=>{ov.remove();document.removeEventListener('keydown',esc);clearTimeout(window.__rl);window.__rl=setTimeout(()=>location.reload(),300000)};
+ const esc=e=>{if(e.key=='Escape')fecha()};
+ ov.addEventListener('click',e=>{if(e.target==ov||e.target.classList.contains('mx'))fecha()});
+ document.addEventListener('keydown',esc);clearTimeout(window.__rl);document.body.appendChild(ov)}
+function secRF(){if(!X||!X.rf_cal||!X.rf_cal.length)return '';const C=X.rf_cal,mx=Math.max(...C.map(c=>c.total),1);
+ const bars=C.map((c,i)=>`<div class="clm" data-m="${i}" data-t="rf" title="Clique para ver o detalhe de ${c.mes}" style="flex:1;min-width:46px;text-align:center;cursor:pointer"><div style="height:120px;display:flex;align-items:flex-end;justify-content:center"><div style="width:70%;background:var(--rf);border-radius:5px 5px 0 0;height:${Math.max(2,c.total/mx*100)}%"></div></div><div style="font-size:11px;margin-top:4px;font-weight:600">${fmt(c.total,2)}</div><div class="mu" style="font-size:11px">${c.mes}</div></div>`).join('');
+ return `<section class="card big"><h3>Rendimento da renda fixa mês a mês</h3><div class="mu">Clique em uma barra para ver o detalhe do mês. Estimativa do ganho líquido de IR de cada aplicação, pela curva do cenário Focus. Na renda fixa o rendimento <b>fica acumulado</b> na aplicação (não cai na conta todo mês, como os proventos); só o resgate ou o vencimento transforma em dinheiro.</div>
+ <div class="row" style="margin-top:12px"><div class="card"><div class="l">Rendimento estimado em 12 meses</div><div class="v" style="color:var(--rf)">${R(C.reduce((a,c)=>a+c.total,0))}</div><div class="s">líquido de IR, sem novos aportes</div></div><div class="card"><div class="l">Média por mês</div><div class="v">${R(C.reduce((a,c)=>a+c.total,0)/12)}</div><div class="s">cresce aos poucos pelo juro sobre juro</div></div></div>
+ <div style="display:flex;gap:4px;margin-top:16px;overflow-x:auto">${bars}</div></section>`}
+function rfMes(i){const c=X.rf_cal[i];if(!c)return;
+ const rows=c.itens.map(it=>`<tr><td>${it[0]}</td><td class="r"><b>${R(it[1])}</b></td><td class="r">${R(it[2])}</td><td>${it[3]||''}</td></tr>`).join('');
+ const ov=document.createElement('div');ov.className='ov';
+ ov.innerHTML=`<div class="mo" role="dialog" style="max-width:860px"><div class="mh"><div><h3>Renda fixa em ${c.mes}</h3><div class="mu" style="margin-top:4px">rendimento estimado no mês: ${R(c.total)}</div></div><button class="mx" aria-label="Fechar">×</button></div>
+ <div style="padding:6px 22px 4px" class="sc"><table><thead><tr><th>Investimento</th><th class="r">Rendimento no mês (R$)</th><th class="r">Valor ao fim do mês (R$)</th><th>Vencimento</th></tr></thead><tbody>${rows}<tr class="t"><td>Total</td><td class="r">${R(c.total)}</td><td class="r">${R(c.itens.reduce((a,x)=>a+x[2],0))}</td><td></td></tr></tbody></table></div>
+ <div class="aviso" style="padding:8px 22px 18px">Estimativa líquida de IR, pela curva do cenário Focus e sem novos aportes. O rendimento fica acumulado na aplicação até o resgate ou o vencimento.</div></div>`;
  const fecha=()=>{ov.remove();document.removeEventListener('keydown',esc);clearTimeout(window.__rl);window.__rl=setTimeout(()=>location.reload(),300000)};
  const esc=e=>{if(e.key=='Escape')fecha()};
  ov.addEventListener('click',e=>{if(e.target==ov||e.target.classList.contains('mx'))fecha()});
@@ -1704,7 +1736,7 @@ function render(){
   <div class="card big" style="flex:1 1 360px"><h3>Fundos imobiliários · nota de 0 a 100</h3><div class="mu">Os que mais atendem aos critérios da aba Parametros · clique para ver a ficha completa</div>${barras(D.melhores_fi,'var(--fi)',v=>fmt(v*100,1),'fi')}</div>
   <div class="card big" style="flex:1 1 360px"><h3>Renda fixa · retorno líquido ao ano</h3><div class="mu">Prazo de 1 a 2 anos, após IR</div>${barras(D.melhores_rf,'var(--rf)',v=>P(v,2))}</div></section>
  <h2>3 · Desempenho e proventos</h2>
- ${secDesemp()}${secProv()}
+ ${secDesemp()}${secRF()}${secProv()}
  <h2>4 · Mapa de risco</h2>
  ${secRisco()}
  <footer class="aviso">${D.aviso}</footer>`;
@@ -1727,7 +1759,7 @@ function ficha(k){const f=D.fichas[k];if(!f)return;const tk=k.split(':')[1];
  const esc=e=>{if(e.key=='Escape')fecha()};
  ov.addEventListener('click',e=>{if(e.target==ov||e.target.classList.contains('mx'))fecha()});
  document.addEventListener('keydown',esc);clearTimeout(window.__rl);document.body.appendChild(ov)}
-document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('.clk');if(t)ficha(t.dataset.f);const m=e.target.closest&&e.target.closest('.clm');if(m)provMes(+m.dataset.m)});
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('.clk');if(t)ficha(t.dataset.f);const m=e.target.closest&&e.target.closest('.clm');if(m)provMes(+m.dataset.m,m.dataset.t)});
 render();
 if(!/[?&]pdf=1/.test(location.search)){pegaUSD();setInterval(pegaUSD,30000)}
 if(/[?&]pdf=1/.test(location.search)){
