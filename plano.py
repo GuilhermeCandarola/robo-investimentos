@@ -118,10 +118,10 @@ def fpc(v, dec=1):
 
 # colunas das abas de candidatos (usadas na planilha e na ficha do Dashboard)
 FICHA_FMT = {"Cotação": "rs", "Score (0-100)": "n1", "P/L": "n2", "Lucro ÷ preço": "pc", "P/VP": "n2", "DY 12m": "pc",
-             "ROE": "pc", "Dív.líq/Patrim.": "n2", "Preço justo Graham": "rs", "Margem vs. Graham": "pc",
+             "ROE": "pc", "Margem líq.": "pc", "Dív.líq/Patrim.": "n2", "Preço justo Graham": "rs", "Margem vs. Graham": "pc",
              "Preço-teto Bazin": "rs", "Liquidez diária (R$)": "n0", "Prêmio sobre IPCA+ (p.p.)": "n1",
              "Vacância": "pc", "Imóveis": "n0"}
-COLS_AC = ["Cotação", "Score (0-100)", "P/L", "Lucro ÷ preço", "P/VP", "DY 12m", "ROE", "Dív.líq/Patrim.",
+COLS_AC = ["Cotação", "Score (0-100)", "P/L", "Lucro ÷ preço", "P/VP", "DY 12m", "ROE", "Margem líq.", "Dív.líq/Patrim.",
            "Preço justo Graham", "Margem vs. Graham", "Preço-teto Bazin", "Liquidez diária (R$)"]
 
 
@@ -1616,7 +1616,7 @@ def gerar(pasta, arq_painel=None):
 
     aba("Candidatos Acoes", "AÇÕES — MAIS PRÓXIMAS DOS SEUS CRITÉRIOS (40 primeiras)", ca,
         COLS_AC,
-        {"Cotação": RS, "Score (0-100)": "0.0", "P/L": N2, "Lucro ÷ preço": PC, "P/VP": N2, "DY 12m": PC, "ROE": PC,
+        {"Cotação": RS, "Score (0-100)": "0.0", "P/L": N2, "Lucro ÷ preço": PC, "P/VP": N2, "DY 12m": PC, "ROE": PC, "Margem líq.": PC,
          "Dív.líq/Patrim.": N2, "Preço justo Graham": RS, "Margem vs. Graham": PC, "Preço-teto Bazin": RS,
          "Liquidez diária (R$)": N0},
         f"Régua de mercado: lucro ÷ preço precisa superar {fpc(juro_real, 2) if juro_real is not None else 'n/d'} "
