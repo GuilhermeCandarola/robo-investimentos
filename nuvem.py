@@ -118,6 +118,9 @@ def rodar(drive, trabalho, py=sys.executable, timeout=900):
 
     env = dict(os.environ, ROBO_PASTA_SAIDA=str(trabalho))
     r = subprocess.run([py, str(BASE / "robo.py")], cwd=str(BASE), capture_output=True, text=True, timeout=timeout, env=env)
+    for linha in (r.stdout or "").splitlines():   # diagnostico sem dados financeiros
+        if linha.startswith("[dl_ebitda]"):
+            print(linha, flush=True)
     if r.returncode != 0:
         detalhe = "" if os.environ.get("GITHUB_ACTIONS") else ": " + (r.stderr or r.stdout)[-400:]
         log.error("robo.py terminou com erro %s%s", r.returncode, detalhe)
