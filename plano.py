@@ -1587,7 +1587,7 @@ function secHoje(c){if(!X)return '';let l=[...X.hoje];
  <div class="card big" style="flex:1 1 380px"><h3>O que mudou desde ontem</h3><div class="mu">${X.mud_base}</div><div style="margin-top:8px;font-size:13px">${mud}</div></div></section>`}
 let MT={};try{MT=JSON.parse(localStorage.getItem('dash_meta')||'{}')||{}}catch(e){}
 const metaEf=()=>{const b=X.meta,o=k=>(typeof MT[k]=='number'&&MT[k]>=0)?MT[k]:b[k];return {pat:o('pat'),renda:o('renda'),prazo:o('prazo'),ret:o('ret')}};
-const brIn=v=>Number(v||0).toFixed(2).replace('.',',');
+const brIn=v=>Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const parseBR=t=>{const s=String(t).trim().replace(/\s/g,'').replace(/\./g,'').replace(',','.');return parseFloat(s)};
 const inMeta=(id,v)=>`<input id="mt_${id}" type="text" inputmode="decimal" value="${id=='pat'?brIn(v):v}" style="font:inherit;font-weight:600;width:${id=='pat'?'150':'70'}px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)">`;
 function secMeta(c){if(!X)return '';const M=metaEf();
