@@ -666,7 +666,6 @@ def construir_dashboard(wb, ctx):
         _dias = l.get("Dias p/ vencer")
         linhas_rf.append({"nome": l["Investimento"], "tipo": l.get("Tipo") or "", "idx": indexador, "taxa": taxa,
                           "hoje": hoje_rf[i], "um": um if um is not None else hoje_rf[i], "anos": anos,
-                          "apl": float(l.get("Aplicado (R$)")) if ok(l.get("Aplicado (R$)")) else hoje_rf[i],
                           "inst": instituicao_de(l["Investimento"], l.get("Tipo")), "fgc": cobre_fgc(l["Investimento"], l.get("Tipo")),
                           "venc": _v.strftime("%d/%m/%Y") if hasattr(_v, "strftime") else (str(_v) if _v else ""),
                           "dias": int(_dias) if ok(_dias) else None})
@@ -1441,21 +1440,6 @@ def construir_extras(wb, ctx, linhas_rf, acoes, fiis, total_rf, total_ac, total_
             itens.append([x["nome"], fim - ini, fim, venc])
         rf_cal.append({"mes": f"{MESES[mm - 1]}/{str(yy)[2:]}", "total": sum(t[1] for t in itens), "itens": itens})
 
-    # ---------- raio-x do resultado (de onde vem o ganho)
-    rx = []
-    for x in linhas_rf:
-        rx.append({"n": x["nome"], "c": "Renda fixa", "inv": x["apl"], "val": x["hoje"]})
-    for x in acoes:
-        if x["qtd"] > 0 and x.get("inv") is not None:
-            rx.append({"n": f"{x['tk']} · {x.get('nome', '')}".strip(" ·"), "c": "Ações", "inv": x["inv"], "val": x["val"]})
-    for x in fiis:
-        if x["qtd"] > 0 and x.get("inv") is not None:
-            rx.append({"n": f"{x['tk']} · {x.get('nome', '')}".strip(" ·"), "c": "FIIs", "inv": x["inv"], "val": x["val"]})
-    for r_ in rx:
-        r_["res"] = r_["val"] - r_["inv"]
-        r_["pct"] = r_["res"] / r_["inv"] if r_["inv"] else 0
-    rx.sort(key=lambda r_: -r_["res"])
-
     # ---------- risco
     inst = {}
     for x in linhas_rf:
@@ -1534,7 +1518,7 @@ def construir_extras(wb, ctx, linhas_rf, acoes, fiis, total_rf, total_ac, total_
         hj.append({"n": "info", "t": f"Proventos esperados em {prox['mes']}: R$ {fbr(prox['total'])}",
                    "d": "Estimativa pelos pagamentos dos últimos 12 meses × quantidade atual."})
     return {"meta": meta, "hist": desempenho, "mud": mud, "mud_base": base_txt, "hoje": hj, "prov": cal, "prov12": prov12,
-            "prov_dy": usou_dy, "rf_mes": rf_mes, "raiox": rx, "rf_cal": rf_cal, "risco": risco, "aplicado": aplicado, "dolar": m.get("Dólar comercial (R$)"),
+            "prov_dy": usou_dy, "rf_mes": rf_mes, "rf_cal": rf_cal, "risco": risco, "aplicado": aplicado, "dolar": m.get("Dólar comercial (R$)"),
             "n_hist": len(hist)}
 
 
@@ -1676,17 +1660,6 @@ function provMes(i,t){if(t=='rf')return rfMes(i);const c=X.prov[i];if(!c)return;
  const esc=e=>{if(e.key=='Escape')fecha()};
  ov.addEventListener('click',e=>{if(e.target==ov||e.target.classList.contains('mx'))fecha()});
  document.addEventListener('keydown',esc);clearTimeout(window.__rl);document.body.appendChild(ov)}
-function secRaioX(){if(!X||!X.raiox||!X.raiox.length)return '';const L=X.raiox;
- const soma=(c,k)=>L.filter(x=>x.c==c).reduce((a,x)=>a+x[k],0);
- const inv=L.reduce((a,x)=>a+x.inv,0),val=L.reduce((a,x)=>a+x.val,0),res=val-inv;
- const rf=soma('Renda fixa','val')-soma('Renda fixa','inv'),ac=soma('Ações','val')-soma('Ações','inv'),fi=soma('FIIs','val')-soma('FIIs','inv');
- const passos=[['Dinheiro que você colocou',inv,'#7F8C8D'],['Rendimento da renda fixa',rf,'#0B5D57'],['Ações',ac,'#3B5BDB'],['FIIs',fi,'#8E44AD']];
- const mx=Math.max(...L.map(x=>Math.abs(x.res)),0.01);
- const rank=L.map(x=>{const w=Math.max(1,Math.abs(x.res)/mx*100);return `<div style="margin-top:10px"><div class="bh"><span><b>${x.n}</b> <span class="mu">${x.c}</span></span><span ${cor(x.res)}>${x.res>=0?'+':''}${R(x.res)} · ${x.pct>=0?'+':''}${P(x.pct,2)}</span></div><div class="bar"><b style="width:${w}%;background:${x.res>=0?'#1E8449':'#C0392B'}"></b></div></div>`}).join('');
- const barras=passos.slice(1).map(p=>`<div style="flex:1 1 150px" class="card"><div class="l">${p[0]}</div><div class="v" ${cor(p[1])}>${p[1]>=0?'+':''}${R(p[1])}</div><div class="s">${inv?P(Math.abs(p[1]/inv)<0.00005?0:p[1]/inv,2):''} sobre o investido</div></div>`).join('');
- return `<section class="card big"><h3>Raio-X: de onde vem o seu resultado</h3><div class="mu">Compara o que está investido com o valor de hoje, ativo por ativo. Não inclui proventos já recebidos, que só passam a ser contados quando entrarem na planilha de compras.</div>
- <div class="row" style="margin-top:12px"><div class="card" style="flex:1 1 200px"><div class="l">Você colocou</div><div class="v">${R(inv)}</div><div class="s">soma de todos os aportes</div></div>${barras}<div class="card" style="flex:1 1 200px;border-color:var(--rf)"><div class="l">Hoje vale</div><div class="v" style="color:var(--rf)">${R(val)}</div><div class="s" ${cor(res)}>${res>=0?'+':''}${R(res)} · ${inv?P(res/inv,2):''}</div></div></div>
- <h4 style="margin:16px 0 0">Quem mais contribuiu (do maior ganho à maior perda)</h4>${rank}</section>`}
 function secRF(){if(!X||!X.rf_cal||!X.rf_cal.length)return '';const C=X.rf_cal,mx=Math.max(...C.map(c=>c.total),1);
  const bars=C.map((c,i)=>`<div class="clm" data-m="${i}" data-t="rf" title="Clique para ver o detalhe de ${c.mes}" style="flex:1;min-width:46px;text-align:center;cursor:pointer"><div style="height:120px;display:flex;align-items:flex-end;justify-content:center"><div style="width:70%;background:var(--rf);border-radius:5px 5px 0 0;height:${Math.max(2,c.total/mx*100)}%"></div></div><div style="font-size:11px;margin-top:4px;font-weight:600">${fmt(c.total,2)}</div><div class="mu" style="font-size:11px">${c.mes}</div></div>`).join('');
  return `<section class="card big"><h3>Rendimento da renda fixa mês a mês</h3><div class="mu">Clique em uma barra para ver o detalhe do mês. Estimativa do ganho líquido de IR de cada aplicação, pela curva do cenário Focus. Na renda fixa o rendimento <b>fica acumulado</b> na aplicação (não cai na conta todo mês, como os proventos); só o resgate ou o vencimento transforma em dinheiro.</div>
@@ -1768,8 +1741,8 @@ function render(){
   <div class="card big" style="flex:1 1 360px"><h3>Ações · nota de 0 a 100</h3><div class="mu">Os que mais atendem aos critérios da aba Parametros · clique para ver a ficha completa</div>${barras(D.melhores_ac,'var(--ac)',v=>fmt(v*100,1),'ac')}</div>
   <div class="card big" style="flex:1 1 360px"><h3>Fundos imobiliários · nota de 0 a 100</h3><div class="mu">Os que mais atendem aos critérios da aba Parametros · clique para ver a ficha completa</div>${barras(D.melhores_fi,'var(--fi)',v=>fmt(v*100,1),'fi')}</div>
   <div class="card big" style="flex:1 1 360px"><h3>Renda fixa · retorno líquido ao ano</h3><div class="mu">Prazo de 1 a 2 anos, após IR</div>${barras(D.melhores_rf,'var(--rf)',v=>P(v,2))}</div></section>
- <h2>3 · Raio-X do resultado</h2>
- ${secRaioX()}
+ <h2>3 · Desempenho e proventos</h2>
+ ${secDesemp()}${secRF()}${secProv()}
  <h2>4 · Mapa de risco</h2>
  ${secRisco()}
  <footer class="aviso">${D.aviso}</footer>`;
