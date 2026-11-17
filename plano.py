@@ -1615,6 +1615,13 @@ const metaEf=()=>{const b=X.meta,o=k=>(typeof MT[k]=='number'&&MT[k]>=0)?MT[k]:b
 const brIn=v=>Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const parseBR=t=>{const s=String(t).trim().replace(/\s/g,'').replace(/\./g,'').replace(',','.');return parseFloat(s)};
 const inMeta=(id,v)=>`<input id="mt_${id}" type="text" inputmode="decimal" value="${id=='pat'?brIn(v):v}" style="font:inherit;font-weight:600;width:${id=='pat'?'150':'70'}px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)">`;
+function barMeta(ser,lab,meta){const w=780,h=270,pl=56,pr=14,pt=22,pb=30,n=ser.length,mx=Math.max(meta,...ser)*1.05;
+ const gy=v=>pt+(h-pt-pb)*(1-v/mx),bw=(w-pl-pr)/n;let g='';
+ for(let k=0;k<=4;k++){const v=mx*k/4,y=gy(v);g+=`<line x1="${pl}" x2="${w-pr}" y1="${y}" y2="${y}" stroke="currentColor" opacity=".12"/><text x="${pl-6}" y="${y+4}" text-anchor="end" font-size="11" fill="currentColor" opacity=".6">${fmt(v/1000,0)} mil</text>`}
+ const bars=ser.map((v,i)=>{const x=pl+i*bw+bw*.18,ww=bw*.64,y=gy(v),ult=i==n-1;
+  return `<rect x="${x}" y="${y}" width="${ww}" height="${h-pb-y}" rx="4" fill="${ult?'#0B5D57':'#5E9C97'}"><title>${lab[i]}: ${R(v)}</title></rect>`+(n<=14||ult?`<text x="${x+ww/2}" y="${y-5}" text-anchor="middle" font-size="10.5" font-weight="${ult?700:400}" fill="currentColor">${fmt(v/1000,1)} mil</text>`:'')+`<text x="${x+ww/2}" y="${h-10}" text-anchor="middle" font-size="11" fill="currentColor" opacity=".65">${lab[i]}</text>`}).join('');
+ const ym=gy(meta);
+ return `<div class="mu" style="margin-top:10px"><span style="margin-right:16px"><i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0B5D57;margin-right:6px;vertical-align:middle"></i>Patrimônio projetado com o aporte simulado</span><span><i style="display:inline-block;width:14px;border-top:2px dashed #C0392B;margin-right:6px;vertical-align:middle"></i>Meta</span></div><svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;margin-top:6px" role="img" aria-label="Gráfico de barras da projeção do patrimônio">${g}${bars}<line x1="${pl}" x2="${w-pr}" y1="${ym}" y2="${ym}" stroke="#C0392B" stroke-width="1.8" stroke-dasharray="6 4"/></svg>`}
 function secMeta(c){if(!X)return '';const M=metaEf();
  const i=M.ret>0?Math.pow(1+M.ret/100,1/12)-1:0,n=Math.round(M.prazo*12);
  const fv=c.pat*Math.pow(1+i,n);const pmt=(n>0&&i>0&&M.pat>0)?Math.max(0,(M.pat-fv)*i/(Math.pow(1+i,n)-1)):0;
@@ -1622,15 +1629,17 @@ function secMeta(c){if(!X)return '';const M=metaEf();
  const anosSem=(c.pat>0&&M.pat>c.pat&&M.ret>0)?Math.log(M.pat/c.pat)/Math.log(1+M.ret/100):0;
  const patNec=M.ret>0?M.renda*12/(M.ret/100):null;
  const pm=S.pmt==null?Math.round(pmt/10)*10:S.pmt;
- const ser=[],lab=[],alvo=[];const anosN=Math.max(1,Math.ceil(M.prazo));for(let a=0;a<=anosN;a++){const k=a*12;lab.push(a==0?'hoje':a+(a==1?' ano':' anos'));ser.push(c.pat*Math.pow(1+i,k)+(i>0?pm*(Math.pow(1+i,k)-1)/i:pm*k));alvo.push(M.pat)}
+ const ser=[],lab=[];const totM=Math.max(1,Math.round(M.prazo*12)),passo=totM<=12?1:totM<=36?3:12;
+ const pts=[];for(let k=0;k<=totM;k+=passo)pts.push(k);if(pts[pts.length-1]!=totM)pts.push(totM);
+ pts.forEach(k=>{lab.push(k==0?'hoje':k<12?k+(k==1?' mês':' meses'):(k%12==0?(k/12)+(k==12?' ano':' anos'):k+' meses'));ser.push(c.pat*Math.pow(1+i,k)+(i>0?pm*(Math.pow(1+i,k)-1)/i:pm*k))});
  const fim=ser[ser.length-1];
  return `<section class="card big"><h3>Meta e progresso</h3><div class="mu" style="margin-top:8px;line-height:2.2">Patrimônio-alvo (R$): ${inMeta('pat',M.pat)} &nbsp; Prazo (anos): ${inMeta('prazo',M.prazo)} ${Object.keys(MT).length?'<button id="mt_rst" style="font:inherit;cursor:pointer;margin-left:8px">Voltar aos valores da planilha</button>':''}</div><div class="mu">Digite e tecle Enter: o cálculo muda na hora e fica salvo neste navegador. A planilha (aba Parametros, seção Metas) é o ponto de partida e não muda por aqui.</div>
  <div class="row" style="margin-top:6px">
   <div style="flex:1 1 320px">${barH('Patrimônio',pPat,1,'var(--rf)',`${R(c.pat)} de ${R(M.pat)} · ${P(pPat)}`)}
   <div class="mu" style="margin-top:12px;line-height:1.6">Sem novos aportes, no retorno de ${fmt(M.ret,1)}% ao ano, o patrimônio chegaria à meta em <b>${anosSem>0?fmt(anosSem,1)+' anos':'—'}</b>.</div></div>
-  <div style="flex:1 1 320px"><div class="card" style="margin:0"><div class="l">Aporte mensal necessário para chegar a ${R(M.pat)} em ${fmt(M.prazo,0)} anos</div><div class="v">${R(pmt)}</div><div class="s">por mês, a ${fmt(M.ret,1)}% ao ano líquido</div></div>
+  <div style="flex:1 1 320px"></div>
   <div class="mu" style="margin-top:10px">Simular aporte mensal (R$): <input id="pmt" type="text" inputmode="decimal" value="${brIn(pm)}" style="font:inherit;font-weight:600;width:120px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)"> em ${fmt(M.prazo,0)} anos: <b>${R(fim)}</b> (${fim>=M.pat?'meta atingida':'faltam '+R(M.pat-fim)})</div></div></div>
- ${lineSVG([{n:'Patrimônio projetado com o aporte simulado',c:'#0B5D57',v:ser},{n:'Meta',c:'#C0392B',v:alvo,d:1,w:1.6}],lab,v=>fmt(v/1000,0)+' mil')}</section>`}
+ ${barMeta(ser,lab,M.pat)}</section>`}
 function secDesemp(){if(!X)return '';const H=X.hist;
  if(!H)return `<section class="card big"><h3>Desempenho e comparação com o mercado</h3><div class="vazio">O robô começou a guardar o histórico diário da carteira agora. O gráfico (carteira × CDI × IPCA × Ibovespa × IFIX) aparece a partir do segundo dia e fica mais útil a cada semana.</div></section>`;
  const u=a=>a[a.length-1],r=a=>u(a)/100-1;const cdi=r(H.cdi);
@@ -1742,7 +1751,7 @@ function render(){
   <div class="card big" style="flex:1 1 360px"><h3>Fundos imobiliários · nota de 0 a 100</h3><div class="mu">Os que mais atendem aos critérios da aba Parametros · clique para ver a ficha completa</div>${barras(D.melhores_fi,'var(--fi)',v=>fmt(v*100,1),'fi')}</div>
   <div class="card big" style="flex:1 1 360px"><h3>Renda fixa · retorno líquido ao ano</h3><div class="mu">Prazo de 1 a 2 anos, após IR</div>${barras(D.melhores_rf,'var(--rf)',v=>P(v,2))}</div></section>
  <h2>3 · Desempenho e proventos</h2>
- ${secDesemp()}${secRF()}${secProv()}
+ ${secRF()}${secProv()}
  <h2>4 · Mapa de risco</h2>
  ${secRisco()}
  <footer class="aviso">${D.aviso}</footer>`;
