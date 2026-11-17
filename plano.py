@@ -588,6 +588,22 @@ def _serie_rf(proj_row, hoje):
     return um, anos
 
 
+def _bruto_proj(liq, apl, d0, hoje, meses, venc, isento):
+    """Inverte o liquido projetado para bruto (mesma regra do robo: IR regressivo so sobre o rendimento)."""
+    if liq is None or isento or apl is None:
+        return liq
+    m = hoje.month - 1 + meses
+    ano, mes = hoje.year + m // 12, m % 12 + 1
+    fim = dt.date(ano, mes, min(hoje.day, 28))
+    if venc is not None and hasattr(venc, "year") and hoje < venc < fim:
+        fim = venc
+    dias = max((fim - (d0 or hoje)).days, 0)
+    a = 0.225 if dias <= 180 else 0.20 if dias <= 360 else 0.175 if dias <= 720 else 0.15
+    if liq <= apl:
+        return liq
+    return (liq - apl * a) / (1 - a)
+
+
 def construir_dashboard(wb, ctx):
     from openpyxl.chart import BarChart, DoughnutChart, Reference
     from openpyxl.chart.label import DataLabelList
@@ -665,10 +681,19 @@ def construir_dashboard(wb, ctx):
         _v = l.get("Vencimento")
         _dias = l.get("Dias p/ vencer")
         linhas_rf.append({"nome": l["Investimento"], "tipo": l.get("Tipo") or "", "idx": indexador, "taxa": taxa,
-                          "hoje": hoje_rf[i], "um": um if um is not None else hoje_rf[i], "anos": anos,
+                          "hoje": hoje_rf[i], "bruto": float(l["Valor bruto estimado (R$)"]), "um": um if um is not None else hoje_rf[i], "anos": anos,
                           "inst": instituicao_de(l["Investimento"], l.get("Tipo")), "fgc": cobre_fgc(l["Investimento"], l.get("Tipo")),
                           "venc": _v.strftime("%d/%m/%Y") if hasattr(_v, "strftime") else (str(_v) if _v else ""),
                           "dias": int(_dias) if ok(_dias) else None})
+        _x = linhas_rf[-1]
+        _ap = float(l["Aplicado (R$)"]) if ok(l.get("Aplicado (R$)")) else None
+        _d0 = l.get("Data aplicação")
+        _d0 = _d0.date() if hasattr(_d0, "date") else (_d0 if hasattr(_d0, "year") else None)
+        _vv = _v.date() if hasattr(_v, "date") else (_v if hasattr(_v, "year") else None)
+        _is = not (ok(l.get("IR estimado")) and float(l["IR estimado"]) > 0)
+        _h = AGORA.date()
+        _x["umb"] = _bruto_proj(_x["um"], _ap, _d0, _h, 1, _vv, _is)
+        _x["anosb"] = [_bruto_proj(v_, _ap, _d0, _h, 12 * (k_ + 1), _vv, _is) for k_, v_ in enumerate(_x["anos"])]
     # linhas de renda variavel
     def bloco_rv(classe):
         out = []
@@ -1718,7 +1743,7 @@ async function pegaUSD(){
 function render(){
  const rf=D.rf,ac=D.ac,fi=D.fi,sum=(l,k)=>l.reduce((a,x)=>a+(x[k]||0),0);
  const totRF=sum(rf,'hoje'),totAC=sum(ac,'val'),totFI=sum(fi,'val'),totRV=totAC+totFI,pat=totRF+totRV;
- const um=sum(rf,'um'),a12=rf.reduce((a,x)=>a+x.anos[0],0),aN=rf.reduce((a,x)=>a+x.anos[hi(S.rf_card)],0);
+ const umB=sum(rf,'umb'),a12B=rf.reduce((a,x)=>a+x.anosb[0],0),aNB=rf.reduce((a,x)=>a+x.anosb[hi(S.rf_card)],0),totRFB=sum(rf,'bruto'),um=sum(rf,'um'),a12=rf.reduce((a,x)=>a+x.anos[0],0),aN=rf.reduce((a,x)=>a+x.anos[hi(S.rf_card)],0);
  const dAno=sum(ac,'anual')+sum(fi,'anual'),dMes=dAno/12,dN=dAno*fator(S.dv_card);
  const al=D.alvos[S.perfil]||[0,0,0];const vals=[totRF,totAC,totFI],nomes=['Renda fixa','Ações','FIIs'],cores=['var(--rf)','var(--ac)','var(--fi)'];
  const AP=S.aporte;const base=pat+AP;const falta=al.map((a,i)=>a/100*base-vals[i]);const pos=falta.reduce((a,x)=>a+(x>0?x:0),0);
@@ -1726,10 +1751,10 @@ function render(){
  window.__pat=pat;const CX={AP,dest,nomes,pat};
  const alocBars=nomes.map((n,i)=>`<div style="margin-top:14px"><div class="bh"><b>${n}</b><span>${P(pat?vals[i]/pat:0)} hoje · alvo ${fmt(al[i],1)}%</span></div><div class="bar" style="height:14px"><b style="width:${Math.min(100,pat?vals[i]/pat*100:0)}%;background:${cores[i]};height:14px"></b><span class="mk" style="left:${al[i]}%"></span></div></div>`).join('');
  const alocTab=nomes.map((n,i)=>`<tr><td>${n}</td><td class="r">${falta[i]>0?R(falta[i]):'acima do alvo'}</td><td class="r"><b>${R(dest[i])}</b></td></tr>`).join('');
- const rfRows=rf.map(x=>`<tr><td>${x.nome}</td><td>${x.tipo}</td><td>${x.idx}</td><td>${x.taxa}</td><td class="r">${fmt(x.hoje)}</td><td class="r">${fmt(x.um)}</td><td class="r">${fmt(x.anos[hi(S.rf_tab)])}</td></tr>`).join('');
+ const rfRows=rf.map(x=>`<tr><td>${x.nome}</td><td>${x.tipo}</td><td>${x.idx}</td><td>${x.taxa}</td><td class="r">${fmt(x.bruto)}</td><td class="r" style="color:#C0392B">− ${fmt(x.bruto-x.hoje)}</td><td class="r"><b>${fmt(x.hoje)}</b></td><td class="r">${fmt(x.um)}</td><td class="r">${fmt(x.anos[hi(S.rf_tab)])}</td></tr>`).join('');
  const rfN=rf.reduce((a,x)=>a+x.anos[hi(S.rf_tab)],0);
  const rfBlock=rf.length?donut(rf.map(x=>({n:x.nome,v:x.hoje})),['#0B5D57','#2BA396','#8FD3C9','#5FB9AE','#BFE6E0'],'R$ '+fmt(totRF,0))+
-  `<div class="mu" style="margin-top:12px">Horizonte: ${sel('rf_tab',HR)}</div><div class="sc"><table><thead><tr><th>Investimento</th><th>Tipo</th><th>Indexador</th><th>Taxa atual</th><th class="r">Valor hoje (R$)</th><th class="r">Projeção próx. mês (R$)</th><th class="r">Projeção no horizonte (R$)</th></tr></thead><tbody>${rfRows}<tr class="t"><td>Total</td><td></td><td></td><td></td><td class="r">${fmt(totRF)}</td><td class="r">${fmt(um)}</td><td class="r">${fmt(rfN)}</td></tr></tbody></table></div>`
+  `<div class="mu" style="margin-top:12px">Horizonte: ${sel('rf_tab',HR)}</div><div class="sc"><table><thead><tr><th>Investimento</th><th>Tipo</th><th>Indexador</th><th>Taxa atual</th><th class="r">Saldo bruto hoje (R$)<div class="mu" style="font-weight:400">igual ao app do banco</div></th><th class="r">IR estimado (R$)<div class="mu" style="font-weight:400">se resgatar hoje</div></th><th class="r">Valor líquido hoje (R$)<div class="mu" style="font-weight:400">o que cai na conta</div></th><th class="r">Projeção próx. mês (R$)</th><th class="r">Projeção no horizonte (R$)</th></tr></thead><tbody>${rfRows}<tr class="t"><td>Total</td><td></td><td></td><td></td><td class="r">${fmt(rf.reduce((a,x)=>a+x.bruto,0))}</td><td class="r" style="color:#C0392B">− ${fmt(rf.reduce((a,x)=>a+x.bruto-x.hoje,0))}</td><td class="r">${fmt(totRF)}</td><td class="r">${fmt(um)}</td><td class="r">${fmt(rfN)}</td></tr></tbody></table></div><div class="aviso" style="margin-top:8px">O <b>saldo bruto</b> é o que o app do banco mostra. O <b>IR estimado</b> é o imposto que seria cobrado se você resgatasse hoje (tabela regressiva), e o <b>valor líquido</b> é o saldo bruto menos esse IR. O patrimônio total, o gráfico de rosca e as projeções usam o valor líquido, que é o mais conservador. Obs.: o IR do robô conta só o rendimento desde a Data da aplicação cadastrada em Minha_Carteira; o rendimento anterior a essa data, já incluso no saldo digitado, não entra no cálculo do IR.</div>`
   :'<div class="vazio">Nenhum investimento em Minha_Carteira.xlsx (aba Renda Fixa).</div>';
  $('#app').innerHTML=`
  <header class="row" style="align-items:flex-end;justify-content:space-between"><div><div class="kick">PLANO DE AÇÃO · DASHBOARD</div><h1>Visão geral da carteira</h1>
@@ -1738,10 +1763,10 @@ function render(){
  ${secHoje(CX)}
  <section class="row"><div class="card"><div class="l">Patrimônio total</div><div class="v">${R(pat)}</div><div class="s">${P(pat?totRF/pat:0)} renda fixa · ${P(pat?totRV/pat:0)} renda variável</div></div></section>
  <section class="row">
-  <div class="card"><div class="l">Renda fixa</div><div class="v" style="color:var(--rf)">${R(totRF)}</div><div class="s">${rf.length} aplicação(ões) · líquido estimado</div></div>
-  <div class="card"><div class="l">Renda fixa: projeção para o próximo mês</div><div class="v">${R(um)}</div><div class="s">+${R(um-totRF)} líquidos de IR (estimativa)</div></div>
-  <div class="card"><div class="l">Renda fixa: projeção para daqui a 12 meses</div><div class="v">${R(a12)}</div><div class="s">+${P(totRF?a12/totRF-1:0)} líquido · cenário Focus</div></div>
-  <div class="card"><div class="l">Renda fixa: projeção para daqui a ${sel('rf_card',HR)}</div><div class="v">${R(aN)}</div><div class="s">líquido de IR · cenário Focus, sem novos aportes</div></div></section>
+  <div class="card"><div class="l">Renda fixa</div><div class="v" style="color:var(--rf)">${R(totRFB)}</div><div class="s">Valor IR: <b style="color:#C0392B">${R(totRFB-totRF)}</b></div><div class="s">Valor líquido: <b>${R(totRF)}</b></div><div class="s mu">${rf.length} aplicação(ões)</div></div>
+  <div class="card"><div class="l">Renda fixa: projeção para o próximo mês</div><div class="v">${R(umB)}</div><div class="s">Valor IR: <b style="color:#C0392B">${R(umB-um)}</b></div><div class="s">Valor líquido: <b>${R(um)}</b></div><div class="s mu">cenário Focus</div></div>
+  <div class="card"><div class="l">Renda fixa: projeção para daqui a 12 meses</div><div class="v">${R(a12B)}</div><div class="s">Valor IR: <b style="color:#C0392B">${R(a12B-a12)}</b></div><div class="s">Valor líquido: <b>${R(a12)}</b></div><div class="s mu">cenário Focus</div></div>
+  <div class="card"><div class="l">Renda fixa: projeção para daqui a ${sel('rf_card',HR)}</div><div class="v">${R(aNB)}</div><div class="s">Valor IR: <b style="color:#C0392B">${R(aNB-aN)}</b></div><div class="s">Valor líquido: <b>${R(aN)}</b></div><div class="s mu">cenário Focus, sem novos aportes</div></div></section>
  <section class="row">
   <div class="card"><div class="l">Renda variável</div><div class="v" style="color:var(--ac)">${R(totRV)}</div><div class="s">${ac.length+fi.length?ac.length+' ação(ões) · '+fi.length+' FII(s)':'nenhum ativo cadastrado ainda'}</div></div>
   <div class="card"><div class="l">Dividendos estimados: próximo mês</div><div class="v">${R(dMes)}</div><div class="s">média mensal (ações pagam em parcelas irregulares)</div></div>
