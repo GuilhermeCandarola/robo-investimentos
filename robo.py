@@ -953,6 +953,17 @@ def valorizar_rf(rf, series):
     return pd.DataFrame(linhas)
 
 
+HORIZONTES = [(1, "1 mês"), (3, "3 meses"), (6, "6 meses"), (12, "12 meses"), (24, "24 meses")] + \
+    [(12 * a, f"{12 * a} meses") for a in range(3, 11)]
+
+
+def _meses(d, n):
+    m = d.month - 1 + n
+    a, m = d.year + m // 12, m % 12 + 1
+    dia = min(d.day, [31, 29 if a % 4 == 0 and (a % 100 or a % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1])
+    return dt.date(a, m, dia)
+
+
 def projetar_rf(cart_rf, rf, cdi_aa, focus):
     """Projeta o valor liquido da renda fixa. Retorna (tabela_focus, tabela_juros_parados, premissas)."""
     if not len(rf) or not cdi_aa:
