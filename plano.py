@@ -680,6 +680,8 @@ def construir_dashboard(wb, ctx):
         um, anos = _serie_rf(pr, hoje_rf[i])
         indexador, taxa = _rem_partes(l.get("Remuneração"))
         _v = l.get("Vencimento")
+        if _v is not None and pd.isna(_v):
+            _v = None  # RDB sem vencimento vira NaT quando outra linha tem data
         _dias = l.get("Dias p/ vencer")
         linhas_rf.append({"nome": l["Investimento"], "tipo": l.get("Tipo") or "", "idx": indexador, "taxa": taxa,
                           "hoje": hoje_rf[i], "bruto": float(l["Valor bruto estimado (R$)"]), "um": um if um is not None else hoje_rf[i], "anos": anos,
