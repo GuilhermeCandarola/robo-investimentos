@@ -1765,7 +1765,7 @@ function render(){
  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="mu" style="font-size:13px;font-weight:600">Perfil de risco</label>${sel('perfil',Object.keys(D.alvos))}<span class="mu">Aqui vale só para esta tela. O perfil da planilha continua o que está no Excel (${D.perfil}).</span></div></div>
  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end"><div class="card" id="usd" style="flex:0 0 auto;min-width:230px"></div><div class="mu">Dados de ${D.gerado}. A página se recarrega sozinha a cada 5 minutos.</div></div></header>
  ${secHoje(CX)}
- <section class="row"><div class="card"><div class="l">Patrimônio total</div><div class="v">${R(pat)}</div><div class="s">${P(pat?totRF/pat:0)} renda fixa · ${P(pat?totRV/pat:0)} renda variável</div></div></section>
+ <section class="row"><div class="card"><div class="l">Patrimônio total</div><div class="v">${R(totRFB+totRV)}</div><div class="s mu">${P(pat?totRF/pat:0)} renda fixa · ${P(pat?totRV/pat:0)} renda variável</div></div></section>
  <section class="row">
   <div class="card"><div class="l">Renda fixa</div><div class="v" style="color:var(--rf)">${R(totRFB)}</div><div class="s">Valor IR: <b style="color:#C0392B">${R(totRFB-totRF)}</b></div><div class="s">Valor líquido: <b>${R(totRF)}</b></div><div class="s mu">${rf.length} aplicação(ões)</div></div>
   <div class="card"><div class="l">Renda fixa: projeção para o próximo mês</div><div class="v">${R(umB)}</div><div class="s">Valor IR: <b style="color:#C0392B">${R(umB-um)}</b></div><div class="s">Valor líquido: <b>${R(um)}</b></div><div class="s mu">cenário Focus</div></div>
