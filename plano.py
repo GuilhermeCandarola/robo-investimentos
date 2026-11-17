@@ -1559,6 +1559,7 @@ td{padding:9px 8px;border-bottom:1px solid var(--bar)}th.r,td.r{text-align:right
 .gd{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px;padding:18px 22px}
 .gd div{border:1px solid var(--bd);border-radius:10px;padding:10px 12px}.gd small{display:block;color:var(--mu);font-size:12px}.gd b{font-size:16px}
 .gd .w2{grid-column:1/-1}.tag{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:700;background:var(--bar)}
+.tl{color:var(--rf);text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;cursor:pointer;font-weight:inherit}.tl:hover{background:rgba(11,93,87,.12)}.tl.clk{margin:0;padding:0;border-radius:3px}.lks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.lk{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:2px 10px;border-radius:99px;border:1px solid var(--rf);color:var(--rf);background:rgba(11,93,87,.08);cursor:pointer;text-decoration:none;font-family:inherit}.lk:hover{background:rgba(11,93,87,.18)}.lk.clk{margin:0;padding:2px 10px;border-radius:99px}.lks{row-gap:8px}.lk.ext::after{content:'↗';font-size:11px}html{scroll-behavior:smooth}
 .aviso{font-size:12px;color:var(--mu);line-height:1.6}
 .tag{font-size:11px;background:rgba(11,93,87,.15);color:var(--rf);padding:1px 6px;border-radius:6px}
 </style></head><body><div class="w" id="app"></div>
@@ -1594,7 +1595,16 @@ function lotesHTML(){
  return `<div class="sc"><table><thead><tr><th>Data</th><th>Empresa / fundo</th><th>Ticker</th><th>Carteira</th><th>Tipo</th><th class="r">Quantidade</th><th class="r">Preço unitário (R$)</th><th class="r">Taxas (R$)</th><th class="r">Valor da operação (R$)</th><th class="r">Cotação atual (R$)</th><th class="r">Resultado (R$)</th><th class="r">Resultado (%)</th></tr></thead><tbody>${rows}</tbody></table></div>`}
 const X=D.x||null;
 const NIV={alta:['#C0392B','Prioridade'],media:['#D68910','Atenção'],info:['#3B5BDB','Informativo']};
-const itens=l=>l.map(x=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--bar)"><span style="flex:0 0 auto;align-self:flex-start;font-size:11px;font-weight:700;color:#fff;background:${NIV[x.n][0]};border-radius:99px;padding:2px 10px">${NIV[x.n][1]}</span><div><b>${x.t}</b><div class="mu" style="margin-top:2px;font-size:13px">${x.d}</div></div></div>`).join('');
+const gn=q=>'https://www.google.com/search?tbm=nws&q='+encodeURIComponent(q);
+const ext=(h,t)=>`<a class="tl" target="_blank" rel="noopener" href="${h}" title="Abre em nova aba">${t}</a>`;
+function lt(t,dest){let n=0;
+ const o=String(t).replace(/Notícia ([A-Z]{4}\d{1,2})|\b([A-Z]{4}\d{1,2})\b|Dólar|Selic meta|Selic|CDI|IPCA/g,(m,nt,tk)=>{
+  if(nt){n++;return ext(gn(nt+' fato relevante'),m)}
+  if(tk){const f=D.fichas['ac:'+tk]?'ac:'+tk:D.fichas['fi:'+tk]?'fi:'+tk:null;if(!f)return m;n++;return `<span class="tl clk" data-f="${f}" role="button" tabindex="0" title="Abrir ficha de ${tk}">${m}</span>`}
+  n++;return /Dólar/.test(m)?ext('https://www.google.com/finance/quote/USD-BRL',m):ext('https://www.bcb.gov.br/publicacoes/focus',m)});
+ if(!n&&dest)return `<a class="tl" href="${dest}" title="Ir para a seção">${o}</a>`;return o}
+const destDe=t=>/FGC|instituição|vence |vencimento/i.test(t)?'#sec-risco':/Proventos esperados/i.test(t)?'#sec-prov':/alvo do perfil|aporte/i.test(t)?'#sec-aloc':/Patrimônio (subiu|caiu)/i.test(t)?'#sec-meta':'';
+const itens=l=>l.map(x=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--bar)"><span style="flex:0 0 auto;align-self:flex-start;font-size:11px;font-weight:700;color:#fff;background:${NIV[x.n][0]};border-radius:99px;padding:2px 10px">${NIV[x.n][1]}</span><div><b>${lt(x.t,destDe(x.t+' '+x.d))}</b><div class="mu" style="margin-top:2px;font-size:13px">${lt(x.d,'')}</div></div></div>`).join('');
 function lineSVG(series,labels,fy,h=250){const w=780,pl=56,pr=14,pt=12,pb=26,n=labels.length;
  const all=series.flatMap(s=>s.v.filter(x=>x!=null));if(!all.length)return '';let mn=Math.min(...all),mx=Math.max(...all);if(mx-mn<1e-9){mn-=1;mx+=1}
  const gx=i=>pl+(n<2?0:i*(w-pl-pr)/(n-1)),gy=v=>pt+(h-pt-pb)*(1-(v-mn)/(mx-mn));
@@ -1607,7 +1617,7 @@ function lineSVG(series,labels,fy,h=250){const w=780,pl=56,pr=14,pt=12,pb=26,n=l
 function barH(rot,v,max,cor,dir,marca){return `<div style="margin-top:12px"><div class="bh"><b>${rot}</b><span>${dir}</span></div><div class="bar"><b style="width:${Math.max(1,Math.min(100,max?v/max*100:0))}%;background:${cor}"></b>${marca!=null?`<span class="mk" style="left:${Math.min(100,marca)}%"></span>`:''}</div></div>`}
 function secHoje(c){if(!X)return '';let l=[...X.hoje];
  if(c.AP>0){const t=c.nomes.map((n,i)=>c.dest[i]>0?`${R(c.dest[i])} em ${n}`:'').filter(Boolean).join(', ');l.unshift({n:'alta',t:`Aporte de ${R(c.AP)} para distribuir`,d:t?`Pelo alvo do perfil ${S.perfil}: ${t}.`:'Todas as classes já estão no alvo; nada a direcionar.'})}
- const mud=X.mud.length?X.mud.map(m=>`<div style="padding:7px 0;border-bottom:1px solid var(--bar)">• ${m}</div>`).join(''):'<div class="vazio">Sem mudanças relevantes desde a última leitura.</div>';
+ const mud=X.mud.length?X.mud.map(m=>`<div style="padding:7px 0;border-bottom:1px solid var(--bar)">• ${lt(m,destDe(m))}</div>`).join(''):'<div class="vazio">Sem mudanças relevantes desde a última leitura.</div>';
  return `<section class="row"><div class="card big" style="flex:1 1 620px"><h3>O que fazer hoje</h3><div class="mu">Sinais mecânicos pelos seus critérios e limites (aba Parametros), em ordem de prioridade. Não é recomendação de investimento.</div>${l.length?itens(l):'<div class="vazio">Nada urgente hoje. Carteira dentro dos limites que você definiu.</div>'}</div>
  <div class="card big" style="flex:1 1 380px"><h3>O que mudou desde ontem</h3><div class="mu">${X.mud_base}</div><div style="margin-top:8px;font-size:13px">${mud}</div></div></section>`}
 let MT={};try{MT=JSON.parse(localStorage.getItem('dash_meta')||'{}')||{}}catch(e){}
@@ -1633,7 +1643,7 @@ function secMeta(c){if(!X)return '';const M=metaEf();
  const pts=[];for(let k=0;k<=totM;k+=passo)pts.push(k);if(pts[pts.length-1]!=totM)pts.push(totM);
  pts.forEach(k=>{lab.push(k==0?'hoje':k<12?k+(k==1?' mês':' meses'):(k%12==0?(k/12)+(k==12?' ano':' anos'):k+' meses'));ser.push(c.pat*Math.pow(1+i,k)+(i>0?pm*(Math.pow(1+i,k)-1)/i:pm*k))});
  const fim=ser[ser.length-1];
- return `<section class="card big"><h3>Meta e progresso</h3><div class="mu" style="margin-top:8px;line-height:2.2">Patrimônio-alvo (R$): ${inMeta('pat',M.pat)} &nbsp; Prazo (anos): ${inMeta('prazo',M.prazo)} ${Object.keys(MT).length?'<button id="mt_rst" style="font:inherit;cursor:pointer;margin-left:8px">Voltar aos valores da planilha</button>':''}</div><div class="mu">Digite e tecle Enter: o cálculo muda na hora e fica salvo neste navegador. A planilha (aba Parametros, seção Metas) é o ponto de partida e não muda por aqui.</div>
+ return `<section class="card big" id="sec-meta"><h3>Meta e progresso</h3><div class="mu" style="margin-top:8px;line-height:2.2">Patrimônio-alvo (R$): ${inMeta('pat',M.pat)} &nbsp; Prazo (anos): ${inMeta('prazo',M.prazo)} ${Object.keys(MT).length?'<button id="mt_rst" style="font:inherit;cursor:pointer;margin-left:8px">Voltar aos valores da planilha</button>':''}</div><div class="mu">Digite e tecle Enter: o cálculo muda na hora e fica salvo neste navegador. A planilha (aba Parametros, seção Metas) é o ponto de partida e não muda por aqui.</div>
  <div class="row" style="margin-top:6px">
   <div style="flex:1 1 320px">${barH('Patrimônio',pPat,1,'var(--rf)',`${R(c.pat)} de ${R(M.pat)} · ${P(pPat)}`)}
   <div class="mu" style="margin-top:12px;line-height:1.6">Sem novos aportes, no retorno de ${fmt(M.ret,1)}% ao ano, o patrimônio chegaria à meta em <b>${anosSem>0?fmt(anosSem,1)+' anos':'—'}</b>.</div></div>
@@ -1650,7 +1660,7 @@ function secDesemp(){if(!X)return '';const H=X.hist;
 function secProv(){if(!X)return '';const C=X.prov,mx=Math.max(...C.map(c=>c.total),1);
  const bars=C.map(c=>`<div class="clm" data-m="${C.indexOf(c)}" title="Clique para ver as datas e valores de ${c.mes}" style="flex:1;min-width:46px;text-align:center;cursor:pointer"><div style="height:120px;display:flex;align-items:flex-end;justify-content:center"><div title="${R(c.total)}" style="width:70%;background:var(--ac);border-radius:5px 5px 0 0;height:${Math.max(2,c.total/mx*100)}%"></div></div><div style="font-size:11px;margin-top:4px;font-weight:600">${fmt(c.total,2)}</div><div class="mu" style="font-size:11px">${c.mes}</div></div>`).join('');
  const rows=C.filter(c=>c.total>0).map(c=>`<tr class="clm" data-m="${C.indexOf(c)}" style="cursor:pointer" title="Clique para detalhar"><td>${c.mes} ›</td><td>${c.itens.map(i=>i[0]+' '+fmt(i[1],2)+(i[2]?' <span class="mu">(dia '+i[2]+')</span>':'')).join(' · ')}</td><td class="r"><b>${fmt(c.total,2)}</b></td></tr>`).join('');
- return `<section class="card big"><h3>Proventos de ações e FIIs (renda variável)</h3><div class="mu">Clique em uma barra para ver as datas e os valores do mês. Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é o dia de pagamento do ano passado repetido neste ano, quando a fonte (Fundamentus) informa; sem isso, é a data ex, e o dinheiro cai alguns dias depois. Datas podem mudar: confirme no comunicado oficial.</div>
+ return `<section class="card big" id="sec-prov"><h3>Proventos de ações e FIIs (renda variável)</h3><div class="mu">Clique em uma barra para ver as datas e os valores do mês. Estimativa: o que cada ativo pagou nos últimos 12 meses × sua quantidade atual. A data é o dia de pagamento do ano passado repetido neste ano, quando a fonte (Fundamentus) informa; sem isso, é a data ex, e o dinheiro cai alguns dias depois. Datas podem mudar: confirme no comunicado oficial.</div>
  <div class="row" style="margin-top:12px"><div class="card"><div class="l">Proventos em 12 meses</div><div class="v">${R(X.prov12)}</div><div class="s">média de ${R(X.prov12/12)} por mês</div></div>
  
  <div class="card"><div class="l">Renda mensal total</div><div class="v" style="color:var(--rf)">${R(X.rf_mes+X.prov12/12)}</div><div class="s">renda fixa + proventos</div></div></div>
@@ -1692,7 +1702,7 @@ function secRisco(){if(!X)return '';const K=X.risco,L=K.limite_fgc;
  const idx=K.idx.map(x=>barH(x[0],x[1],maxX,'var(--ac)',`${R(x[1])} · ${P(x[1]/tot,x[1]/tot<0.1?1:0)}`)).join('');
  const mxv=Math.max(...K.venc.map(x=>x[1]),1);const ven=K.venc.map(x=>barH(x[0],x[1],mxv,'var(--fi)',`${R(x[1])}`)).join('');
  const pe=K.pesos.length?K.pesos.map(x=>barH(x[0],x[1],Math.max(K.conc_max/100*1.5,x[1]),x[1]*100>K.conc_max?'#C0392B':'var(--ac)',`${P(x[1],1)} do patrimônio`,K.conc_max/100/Math.max(K.conc_max/100*1.5,x[1])*100)).join(''):'<div class="vazio">Sem ações ou FIIs na carteira.</div>';
- return `<section class="row"><div class="card big" style="flex:1 1 520px"><h3>Concentração por instituição e FGC</h3><div class="mu">Marcador = limite do FGC (${R(L)} por instituição). Se uma instituição quebrar, o FGC devolve até esse valor por CPF.</div>${ins}</div>
+ return `<section class="row" id="sec-risco"><div class="card big" style="flex:1 1 520px"><h3>Concentração por instituição e FGC</h3><div class="mu">Marcador = limite do FGC (${R(L)} por instituição). Se uma instituição quebrar, o FGC devolve até esse valor por CPF.</div>${ins}</div>
  <div class="card big" style="flex:1 1 340px"><h3>Por tipo de rendimento</h3><div class="mu">Dependência de juros (CDI/Selic), inflação (IPCA), prefixado e bolsa</div>${idx}</div>
  <div class="card big" style="flex:1 1 340px"><h3>Quando o dinheiro fica disponível</h3><div class="mu">Renda fixa por vencimento; ações e FIIs vendem em D+2</div>${ven}</div>
  <div class="card big" style="flex:1 1 340px"><h3>Peso de cada ação/FII</h3><div class="mu">Marcador = limite de ${fmt(K.conc_max,0)}% por ativo (aba Parametros)</div>${pe}</div></section>`}
@@ -1738,7 +1748,7 @@ function render(){
   <div class="card"><div class="l">Dividendos estimados: próximos 12 meses</div><div class="v">${R(dAno)}</div><div class="s">${P(totRV?dAno/totRV:0)} sobre o valor atual</div></div>
   <div class="card"><div class="l">Dividendos estimados: próximos ${sel('dv_card',HR)}</div><div class="v">${R(dN)}</div><div class="s">soma acumulada; crescimento anual de ${fmt(D.div_cresc,1)}%</div></div></section>
  ${secMeta(CX)}
- <section class="row"><div class="card big" style="flex:1 1 620px"><h3>Alocação atual × alvo do perfil ${S.perfil}</h3><div class="mu">Barra cheia = hoje · marcador vertical = alvo</div>${alocBars}</div>
+ <section class="row" id="sec-aloc"><div class="card big" style="flex:1 1 620px"><h3>Alocação atual × alvo do perfil ${S.perfil}</h3><div class="mu">Barra cheia = hoje · marcador vertical = alvo</div>${alocBars}</div>
   <div class="card big" style="flex:1 1 380px"><h3>Destino do aporte de ${R(AP)}</h3><div class="mu" style="margin-top:6px">Aporte (R$): <input id="ap" type="text" inputmode="decimal" value="${brIn(AP)}" style="font:inherit;font-weight:600;width:130px;padding:3px 8px;border-radius:7px;border:1px solid var(--rf);background:rgba(11,93,87,.12);color:var(--rf)"> vale só para esta tela; no Excel (${R(D.aporte)}) mude no Dashboard.</div><table><thead><tr><th>Classe</th><th class="r">Falta para o alvo</th><th class="r">Aporte</th></tr></thead><tbody>${alocTab}</tbody></table></div></section>
  <h2>1 · Minha carteira atual</h2>
  <section class="card big"><h3>Renda fixa</h3><div class="mu">dados reais · valores líquidos de IR, estimados</div>${rfBlock}</section>
