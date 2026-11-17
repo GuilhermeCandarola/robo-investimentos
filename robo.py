@@ -582,6 +582,65 @@ def criar_aba_compras(wb):
     return ws
 
 
+CAB_MOV = ["Data", "Investimento (igual ao nome da aba Renda Fixa)", "Tipo (Aporte/Resgate)", "Valor (R$)", "Observações"]
+LEGENDA_MOV = (
+    "Registre aqui cada APORTE e cada RESGATE da renda fixa feito DEPOIS da Data da aplicação cadastrada na aba Renda Fixa, uma linha por movimento, "
+    "nas células amarelas. Data = dia do movimento (dd/mm/aaaa). Investimento = o mesmo nome da aba Renda Fixa. Tipo = Aporte ou Resgate. "
+    "Valor = o valor BRUTO do aporte ou do resgate (no resgate, o valor retirado do saldo antes do IR). "
+    "O robô soma os aportes ao saldo, tira os resgates (com o IR proporcional) e recalcula saldo, rendimento e IR. "
+    "Movimentos com data igual ou anterior à Data da aplicação são ignorados. Salve e feche o arquivo; a atualização vem em até 15 min.")
+
+
+def criar_aba_movimentos(wb):
+    """Aba Movimentos RF (aportes e resgates da renda fixa). Sem linhas de exemplo."""
+    from openpyxl.worksheet.datavalidation import DataValidation
+    ws = wb.create_sheet("Movimentos RF")
+    azul = PatternFill("solid", fgColor="1F3864")
+    amar = PatternFill("solid", fgColor="FFF2CC")
+    ws["A1"] = "MOVIMENTOS DA RENDA FIXA — APORTES e RESGATES"
+    ws["A1"].font = Font(name="Arial", size=14, bold=True, color="FFFFFF")
+    for c in range(1, len(CAB_MOV) + 1):
+        ws.cell(1, c).fill = azul
+    ws["A2"] = LEGENDA_MOV
+    ws["A2"].font = Font(name="Arial", size=9, italic=True)
+    ws["A2"].alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(CAB_MOV))
+    ws.row_dimensions[2].height = 80
+    for i, (h, w) in enumerate(zip(CAB_MOV, [14, 40, 20, 16, 36]), 1):
+        c = ws.cell(4, i, h)
+        c.font, c.fill = Font(name="Arial", size=10, bold=True, color="FFFFFF"), azul
+        c.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.row_dimensions[4].height = 32
+    for r in range(5, 305):
+        for i in range(1, len(CAB_MOV) + 1):
+            c = ws.cell(r, i)
+            c.fill, c.font = amar, Font(name="Arial", size=10, color="0000FF")
+        ws.cell(r, 1).number_format = "DD/MM/YYYY"
+        ws.cell(r, 4).number_format = "#,##0.00"
+    dv = DataValidation(type="list", formula1='"Aporte,Resgate"', allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add("C5:C304")
+    ws.freeze_panes = "A5"
+    return ws
+
+
+def garantir_aba_movimentos(caminho):
+    """Se Minha_Carteira.xlsx ainda nao tem a aba Movimentos RF, cria (uma vez). Falha em silencio se o arquivo estiver aberto."""
+    try:
+        wb = load_workbook(caminho)
+        if "Movimentos RF" in wb.sheetnames:
+            wb.close()
+            return False
+        criar_aba_movimentos(wb)
+        wb.save(caminho)
+        log.info("Aba Movimentos RF criada em %s", caminho)
+        return True
+    except Exception as e:  # noqa
+        log.warning("Nao foi possivel criar a aba Movimentos RF agora (%s); tento na proxima atualizacao", e)
+        return False
+
+
 def garantir_aba_compras(caminho):
     """Se Minha_Carteira.xlsx ainda nao tem a aba Compras, cria (uma vez). Falha em silencio se o arquivo estiver aberto."""
     try:
@@ -668,6 +727,7 @@ def criar_modelo_carteira(caminho):
         "Deixe em branco para não usar.",
         CAB_META, [["Renda Fixa", 50], ["Ações", 30], ["FIIs", 20]], [22, 14])
     criar_aba_compras(wb)
+    criar_aba_movimentos(wb)
     wb.save(caminho)
 
 
@@ -779,6 +839,26 @@ def ler_carteira(caminho):
                 rv.append(novo)
         else:
             rv = [p for p in rv if p["Ticker"] != t]
+    # ---- aba Movimentos RF: aportes e resgates depois da Data da aplicacao
+    import unicodedata
+
+    def _norm(t):
+        t = unicodedata.normalize("NFKD", str(t or "")).encode("ascii", "ignore").decode().lower()
+        return " ".join(t.split())
+    por_nome = {_norm(p["Nome"]): p for p in rf}
+    for p in rf:
+        p["Movs"] = []
+    for l in _ler_aba(wb, "Movimentos RF", "Data"):
+        l = list(l) + [vazio] * 5
+        d, nome, v = _data(_v(l[0])), _norm(_v(l[1])), _num(_v(l[3]))
+        resg = str(_v(l[2]) or "").strip().upper().startswith("R")
+        alvo_ = por_nome.get(nome)
+        if d is not None and alvo_ is not None and v == v and v > 0:
+            alvo_["Movs"].append((d, -v if resg else v))
+        elif nome or _v(l[3]) not in (None, ""):
+            log.warning("Aba Movimentos RF: linha ignorada (confira data, nome do investimento e valor): %s", _v(l[1]) or "?")
+    for p in rf:
+        p["Movs"].sort(key=lambda x: x[0])
     metas = {}
     for l in _ler_aba(wb, "Metas", "Classe"):
         if len(l) < 2:
@@ -798,62 +878,79 @@ def valorizar_rf(rf, series):
     linhas = []
     for p in rf:
         d0 = p["DataAplic"] or HOJE
-        dias = max((HOJE - d0).days, 0)
-        du = int(np.busday_count(d0, HOJE)) if dias else 0
         taxa = p["Taxa"] if p["Taxa"] == p["Taxa"] else 0.0
-        idx, fator, obs = p["Indexador"], 1.0, ""
-        try:
+        idx, obs = p["Indexador"], ""
+
+        def seg(d_i, d_f, final):
+            """Fator de rendimento entre d_i (inclusive) e d_f (exclusive)."""
+            if d_f <= d_i:
+                return 1.0
+            du_ = int(np.busday_count(d_i, d_f))
             if idx in ("CDI", "SELIC"):
-                s = series.get("cdi" if idx == "CDI" else "selic")
-                if s is None:
+                s_ = series.get("cdi" if idx == "CDI" else "selic")
+                if s_ is None:
                     raise ValueError("série diária indisponível")
-                v = s[(s["data"] >= d0) & (s["data"] < HOJE)]["valor"] / 100
+                v_ = s_[(s_["data"] >= d_i) & (s_["data"] < d_f)]["valor"] / 100
                 if idx == "CDI":
-                    fator = float(np.prod(1 + v * taxa / 100))
-                else:
-                    fator = float(np.prod(1 + v)) * (1 + taxa / 100) ** (du / 252)
-            elif idx == "IPCA":
-                s = series.get("ipca")
-                if s is None:
+                    return float(np.prod(1 + v_ * taxa / 100))
+                return float(np.prod(1 + v_)) * (1 + taxa / 100) ** (du_ / 252)
+            if idx == "IPCA":
+                s_ = series.get("ipca")
+                if s_ is None:
                     raise ValueError("IPCA indisponível")
-                ini = d0.replace(day=1)
-                v = s[s["data"] >= ini]["valor"] / 100
-                fator = float(np.prod(1 + v)) * (1 + taxa / 100) ** (du / 252)
-            elif idx == "PRE":
-                fator = (1 + taxa / 100) ** (du / 252)
-            else:
+                ini_ = d_i.replace(day=1)
+                m_ = (s_["data"] >= ini_) if final else ((s_["data"] >= ini_) & (s_["data"] < d_f))
+                return float(np.prod(1 + s_[m_]["valor"] / 100)) * (1 + taxa / 100) ** (du_ / 252)
+            if idx == "PRE":
+                return (1 + taxa / 100) ** (du_ / 252)
+            raise KeyError(idx)
+        try:
+            if idx not in ("CDI", "SELIC", "IPCA", "PRE"):
                 obs = "Indexador não reconhecido"
+            # saldo evolui por segmentos: aportes somam, resgates tiram o valor (com IR e principal proporcionais)
+            saldo, d_cur = p["Aplicado"], d0
+            lotes = [[d0, p["Aplicado"]]]  # [data, principal restante]
+            ir_prev = 0.0 if p["Isento"] else float(p.get("IRPrev") or 0.0)
+            for d_m, v_m in p.get("Movs", []):
+                if d_m <= d0 or d_m > HOJE:
+                    continue
+                saldo *= seg(d_cur, d_m, False)
+                d_cur = d_m
+                if v_m > 0:
+                    saldo += v_m
+                    lotes.append([d_m, v_m])
+                else:
+                    ret = min(-v_m, saldo)
+                    fr = ret / saldo if saldo > 0 else 0.0
+                    saldo -= ret
+                    for lt in lotes:
+                        lt[1] *= 1 - fr
+                    ir_prev *= 1 - fr
+            saldo *= seg(d_cur, HOJE, True)
         except Exception as e:  # noqa
             obs = f"Sem cálculo: {e}"
-        bruto = p["Aplicado"] * fator
-        rend = bruto - p["Aplicado"]
-        aliq = 0.0 if p["Isento"] else aliquota_ir(dias)
-        ir_prev = 0.0 if p["Isento"] else float(p.get("IRPrev") or 0.0)  # IR ja acumulado antes da Data da aplicacao (informado pelo usuario)
-        liquido = bruto - max(rend, 0) * aliq - ir_prev
+            saldo, lotes = p["Aplicado"], [[d0, p["Aplicado"]]]
+            ir_prev = 0.0 if p["Isento"] else float(p.get("IRPrev") or 0.0)
+        principal = sum(x[1] for x in lotes)
+        bruto = saldo
+        rend = bruto - principal
+        idade = (sum(x[1] * max((HOJE - x[0]).days, 0) for x in lotes) / principal) if principal > 0 else max((HOJE - d0).days, 0)
+        p["IdadeMedia"] = idade
+        aliq = 0.0 if p["Isento"] else aliquota_ir(idade)
+        liquido = bruto - max(rend, 0) * aliq - ir_prev  # ir_prev: IR ja acumulado antes da Data da aplicacao (informado pelo usuario)
         venc = p["Vencimento"]
         dias_venc = (venc - HOJE).days if venc else None
         tx = f"{taxa:g}".replace(".", ",")
         desc = {"CDI": f"{tx}% do CDI", "SELIC": f"Selic + {tx}%",
                 "IPCA": f"IPCA + {tx}%", "PRE": f"{tx}% a.a."}.get(idx, idx)
+        d_exib = (HOJE - dt.timedelta(days=int(round(idade)))) if p.get("Movs") else d0
         linhas.append({"Investimento": p["Nome"], "Tipo": p["Tipo"], "Remuneração": desc,
-                       "Aplicado (R$)": p["Aplicado"], "Data aplicação": d0,
+                       "Aplicado (R$)": principal, "Data aplicação": d_exib,
                        "Valor bruto estimado (R$)": bruto, "Rendimento (R$)": rend,
-                       "Rentab. (%)": fator - 1, "IR estimado": aliq, "IR anterior (R$)": ir_prev,
+                       "Rentab. (%)": (bruto / principal - 1) if principal > 0 else 0.0, "IR estimado": aliq, "IR anterior (R$)": ir_prev,
                        "Valor líquido estimado (R$)": liquido, "Vencimento": venc,
                        "Dias p/ vencer": dias_venc, "Pontos de atenção": obs})
     return pd.DataFrame(linhas)
-
-
-# ------------------------------------------------------------------ projecao
-HORIZONTES = [(1, "1 mês"), (3, "3 meses"), (6, "6 meses"), (12, "12 meses"), (24, "24 meses")] + \
-    [(12 * a, f"{12 * a} meses") for a in range(3, 11)]
-
-
-def _meses(d, n):
-    m = d.month - 1 + n
-    a, m = d.year + m // 12, m % 12 + 1
-    dia = min(d.day, [31, 29 if a % 4 == 0 and (a % 100 or a % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1])
-    return dt.date(a, m, dia)
 
 
 def projetar_rf(cart_rf, rf, cdi_aa, focus):
@@ -898,9 +995,12 @@ def projetar_rf(cart_rf, rf, cdi_aa, focus):
                     bruto *= (1 + taxa / 100) ** (1 / 252)
             d += dt.timedelta(days=1)
         d0 = p["DataAplic"] or HOJE
-        rend = bruto - p["Aplicado"]
-        aliq = 0.0 if p["Isento"] else aliquota_ir(max((fim - d0).days, 0))
-        return bruto - max(rend, 0) * aliq - (0.0 if p["Isento"] else float(p.get("IRPrev") or 0.0))
+        aplic = float(linha["Aplicado (R$)"])
+        rend = bruto - aplic
+        idade = p.get("IdadeMedia")
+        dias_ = (max((fim - HOJE).days, 0) + idade) if idade is not None else max((fim - d0).days, 0)
+        aliq = 0.0 if p["Isento"] else aliquota_ir(dias_)
+        return bruto - max(rend, 0) * aliq - (0.0 if p["Isento"] else float(linha.get("IR anterior (R$)") or 0.0))
 
     out = {}
     for cen in ("focus", "parado"):
@@ -1358,6 +1458,7 @@ def main():
         log.info("Modelo de carteira criado em %s", arq_cart)
     else:
         garantir_aba_compras(arq_cart)
+        garantir_aba_movimentos(arq_cart)
     try:
         mt_cart = arq_cart.stat().st_mtime
         cart = ler_carteira(arq_cart)
