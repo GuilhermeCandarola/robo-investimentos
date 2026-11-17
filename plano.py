@@ -1039,6 +1039,9 @@ def construir_dashboard(wb, ctx):
             continue
         for pos_, (_, l_) in enumerate(df_.head(40).iterrows(), 1):
             campos_ = ficha_linha(l_, cols_)
+            _c, _r = l_.get("Cotação"), l_.get("Rendimento 12m (R$/cota)")
+            if ok(_c) and ok(_r):
+                campos_.insert(2, ["Se comprar 1 cota", f"1 cota de R$ {fbr(_c)} - dividendo estimado R$ {fbr(_r)}"])
             campos_.insert(len(campos_) - 1, ["Quando paga (data ex)", padrao_proventos(p.get("proventos"), str(l_["Ticker"]), AGORA.date())])
             fichas[f"{cls_}:{l_['Ticker']}"] = {"nome": NOMES.get(l_["Ticker"], ""), "pos": pos_,
                                                 "campos": campos_}
@@ -1753,7 +1756,7 @@ function render(){
 function ficha(k){const f=D.fichas[k];if(!f)return;const tk=k.split(':')[1];
  const g=n=>(f.campos.find(c=>c[0]==n)||[0,'n/d'])[1];
  const cls=k.startsWith('ac')?'Ação':'FII';
- const corpo=f.campos.filter(c=>!['Sinal','Ticker','Critérios atendidos','Não atende em'].includes(c[0])).map(c=>`<div><small>${c[0]}</small><b>${c[1]}</b></div>`).join('');
+ const corpo=f.campos.filter(c=>!['Sinal','Ticker','Critérios atendidos','Não atende em'].includes(c[0])).map(c=>`<div${c[0]=='Se comprar 1 cota'?' style="grid-column:1/-1;border-color:var(--rf);background:rgba(11,93,87,.08)"':''}><small>${c[0]}</small><b>${c[1]}</b></div>`).join('');
  const ov=document.createElement('div');ov.className='ov';
  ov.innerHTML=`<div class="mo" role="dialog"><div class="mh"><div><h3>${tk}${f.nome?' · '+f.nome:''}</h3><div class="mu" style="margin-top:4px">${cls} · ${f.pos}º no ranking de candidatos · linha da aba Candidatos ${k.startsWith('ac')?'Acoes':'FIIs'} do Plano de Ação</div></div><button class="mx" aria-label="Fechar">×</button></div>
  <div class="gd"><div><small>Sinal</small><b>${g('Sinal')}</b></div><div><small>Critérios atendidos</small><b>${g('Critérios atendidos')}</b></div>${corpo}<div class="w2"><small>Não atende em</small><b style="font-size:14px;font-weight:600">${g('Não atende em')||'-'}</b></div></div>
