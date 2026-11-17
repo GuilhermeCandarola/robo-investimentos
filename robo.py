@@ -535,7 +535,7 @@ def buscar_noticias(ticker, n):
 CAB_RV = ["Ticker", "Quantidade", "Preço médio (R$)", "Alerta se cair abaixo de (R$)",
           "Alerta se subir acima de (R$)", "Observações"]
 CAB_RF = ["Nome do investimento", "Tipo", "Indexador", "Taxa", "Valor aplicado (R$)",
-          "Data da aplicação", "Vencimento", "Isento de IR? (S/N)"]
+          "Data da aplicação", "Vencimento", "Isento de IR? (S/N)", "IR já acumulado até a data da aplicação (R$)"]
 CAB_META = ["Classe", "Alvo (%)"]
 CAB_COMPRAS = ["Data", "Ticker", "Tipo (Compra/Venda)", "Quantidade", "Preço unitário (R$)",
                "Taxas e corretagem (R$)", "Observações"]
@@ -654,13 +654,13 @@ def criar_modelo_carteira(caminho):
         "Indexador e Taxa: CDI = % do CDI (ex.: 110); SELIC = ágio em % a.a. (ex.: 0,1); "
         "IPCA = juro real em % a.a. (ex.: 7,5 para IPCA+7,5%); PRE = taxa em % a.a. (ex.: 14,5). "
         "As linhas abaixo são EXEMPLOS: substitua pelos seus investimentos. O valor atual é uma "
-        "estimativa na curva do papel (não considera marcação a mercado).",
+        "estimativa na curva do papel (não considera marcação a mercado). Coluna I (opcional): IR que o app do banco já descontaria do rendimento anterior à Data da aplicação, em R$; o robô subtrai esse valor do líquido.",
         CAB_RF,
         [["Tesouro Selic 2031", "Tesouro", "SELIC", 0.1, 20000, dt.date(2025, 3, 10), dt.date(2031, 3, 1), "N"],
          ["CDB Banco X 110% CDI", "CDB", "CDI", 110, 15000, dt.date(2025, 8, 5), dt.date(2028, 8, 5), "N"],
          ["Tesouro IPCA+ 2035", "Tesouro", "IPCA", 7.4, 10000, dt.date(2025, 11, 20), dt.date(2035, 5, 15), "N"],
          ["LCI Banco Y 92% CDI", "LCI", "CDI", 92, 12000, dt.date(2026, 2, 2), dt.date(2026, 12, 2), "S"]],
-        [30, 13, 12, 10, 18, 16, 14, 16])
+        [30, 13, 12, 10, 18, 16, 14, 16, 26])
     ws = wb.create_sheet("Metas")
     aba(ws, "ALOCAÇÃO-ALVO (opcional)",
         "Informe o percentual que VOCÊ deseja ter em cada classe (soma = 100). O Painel mostra o "
@@ -727,7 +727,7 @@ def ler_carteira(caminho):
                        "AlertaAlto": _num(_v(l[4]))})
     rf = []
     for l in _ler_aba(wb, "Renda Fixa", "Nome do investimento"):
-        l = list(l) + [vazio] * 8
+        l = list(l) + [vazio] * 9
         val = _num(_v(l[4]))
         if val == val and val > 0:
             idx = str(_v(l[2]) or "").strip().upper().replace("É", "E")
@@ -737,7 +737,8 @@ def ler_carteira(caminho):
             rf.append({"Nome": str(_v(l[0])).strip(), "Tipo": str(_v(l[1]) or "").strip(),
                        "Indexador": idx, "Taxa": taxa, "Aplicado": val, "DataAplic": _data(_v(l[5])),
                        "Vencimento": _data(_v(l[6])),
-                       "Isento": str(_v(l[7]) or "").strip().upper().startswith("S")})
+                       "Isento": str(_v(l[7]) or "").strip().upper().startswith("S"),
+                       "IRPrev": (lambda v_: v_ if v_ == v_ and v_ > 0 else 0.0)(_num(_v(l[8])))})
     # ---- aba Compras: calcula quantidade e preco medio por ativo (custo medio) e guarda cada operacao
     lotes = []
     for n_, l in enumerate(_ler_aba(wb, "Compras", "Data")):
@@ -827,7 +828,8 @@ def valorizar_rf(rf, series):
         bruto = p["Aplicado"] * fator
         rend = bruto - p["Aplicado"]
         aliq = 0.0 if p["Isento"] else aliquota_ir(dias)
-        liquido = bruto - max(rend, 0) * aliq
+        ir_prev = 0.0 if p["Isento"] else float(p.get("IRPrev") or 0.0)  # IR ja acumulado antes da Data da aplicacao (informado pelo usuario)
+        liquido = bruto - max(rend, 0) * aliq - ir_prev
         venc = p["Vencimento"]
         dias_venc = (venc - HOJE).days if venc else None
         tx = f"{taxa:g}".replace(".", ",")
@@ -836,7 +838,7 @@ def valorizar_rf(rf, series):
         linhas.append({"Investimento": p["Nome"], "Tipo": p["Tipo"], "Remuneração": desc,
                        "Aplicado (R$)": p["Aplicado"], "Data aplicação": d0,
                        "Valor bruto estimado (R$)": bruto, "Rendimento (R$)": rend,
-                       "Rentab. (%)": fator - 1, "IR estimado": aliq,
+                       "Rentab. (%)": fator - 1, "IR estimado": aliq, "IR anterior (R$)": ir_prev,
                        "Valor líquido estimado (R$)": liquido, "Vencimento": venc,
                        "Dias p/ vencer": dias_venc, "Pontos de atenção": obs})
     return pd.DataFrame(linhas)
@@ -898,7 +900,7 @@ def projetar_rf(cart_rf, rf, cdi_aa, focus):
         d0 = p["DataAplic"] or HOJE
         rend = bruto - p["Aplicado"]
         aliq = 0.0 if p["Isento"] else aliquota_ir(max((fim - d0).days, 0))
-        return bruto - max(rend, 0) * aliq
+        return bruto - max(rend, 0) * aliq - (0.0 if p["Isento"] else float(p.get("IRPrev") or 0.0))
 
     out = {}
     for cen in ("focus", "parado"):
@@ -1618,7 +1620,7 @@ def main():
     r = secao(ws, r, "RENDA FIXA")
     if len(rf):
         r = tabela(ws, r, rf, {"Aplicado (R$)": RS, "Data aplicação": DT, "Valor bruto estimado (R$)": RS,
-                               "Rendimento (R$)": RS, "Rentab. (%)": PC, "IR estimado": '0.0%',
+                               "Rendimento (R$)": RS, "Rentab. (%)": PC, "IR estimado": '0.0%', "IR anterior (R$)": RS,
                                "Valor líquido estimado (R$)": RS, "Vencimento": DT, "Dias p/ vencer": N0},
                    cores=["Rendimento (R$)"], filtro=False)
         ws.cell(r - 1, 1, "Valores estimados na curva do papel com CDI, Selic e IPCA oficiais; dias úteis sem feriados. "

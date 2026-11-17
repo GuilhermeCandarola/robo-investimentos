@@ -588,10 +588,11 @@ def _serie_rf(proj_row, hoje):
     return um, anos
 
 
-def _bruto_proj(liq, apl, d0, hoje, meses, venc, isento):
+def _bruto_proj(liq, apl, d0, hoje, meses, venc, isento, ir_prev=0.0):
     """Inverte o liquido projetado para bruto (mesma regra do robo: IR regressivo so sobre o rendimento)."""
     if liq is None or isento or apl is None:
         return liq
+    liq = liq + (ir_prev or 0.0)  # devolve o IR anterior a Data da aplicacao, que o robo ja abateu do liquido
     m = hoje.month - 1 + meses
     ano, mes = hoje.year + m // 12, m % 12 + 1
     fim = dt.date(ano, mes, min(hoje.day, 28))
@@ -692,8 +693,9 @@ def construir_dashboard(wb, ctx):
         _vv = _v.date() if hasattr(_v, "date") else (_v if hasattr(_v, "year") else None)
         _is = not (ok(l.get("IR estimado")) and float(l["IR estimado"]) > 0)
         _h = AGORA.date()
-        _x["umb"] = _bruto_proj(_x["um"], _ap, _d0, _h, 1, _vv, _is)
-        _x["anosb"] = [_bruto_proj(v_, _ap, _d0, _h, 12 * (k_ + 1), _vv, _is) for k_, v_ in enumerate(_x["anos"])]
+        _ip = float(l["IR anterior (R$)"]) if ok(l.get("IR anterior (R$)")) else 0.0
+        _x["umb"] = _bruto_proj(_x["um"], _ap, _d0, _h, 1, _vv, _is, _ip)
+        _x["anosb"] = [_bruto_proj(v_, _ap, _d0, _h, 12 * (k_ + 1), _vv, _is, _ip) for k_, v_ in enumerate(_x["anos"])]
     # linhas de renda variavel
     def bloco_rv(classe):
         out = []
