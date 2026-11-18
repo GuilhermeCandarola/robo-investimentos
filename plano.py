@@ -1580,6 +1580,7 @@ td{padding:9px 8px;border-bottom:1px solid var(--bar)}th.r,td.r{text-align:right
 .bh{display:flex;justify-content:space-between;font-size:13px}
 .mk{position:absolute;top:-4px;width:3px;height:20px;background:var(--tx);border-radius:2px}
 .vazio{font-size:13px;color:var(--mu);margin-top:12px}
+.okb{flex:0 0 auto;align-self:flex-start;margin-left:auto;border:0;background:transparent;color:#1E8E5A;font-size:20px;font-weight:900;line-height:1;cursor:pointer;padding:0 6px;-webkit-text-stroke:1px #1E8E5A}.okb:hover{color:#146B43;-webkit-text-stroke-color:#146B43}.rst{background:none;border:0;color:var(--mu,#667);font-size:12px;cursor:pointer;text-decoration:underline;padding:8px 0 0}
 .clk{cursor:pointer;border-radius:8px;padding:2px 6px;margin-left:-6px;margin-right:-6px}.clk:hover{background:var(--bar)}
 .ov{position:fixed;inset:0;background:rgba(10,18,26,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
 .mo{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:14px;max-width:760px;width:100%;max-height:90vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.35)}
@@ -1633,7 +1634,12 @@ function lt(t,dest){let n=0;
   n++;return /Dólar/.test(m)?ext('https://www.google.com/finance/quote/USD-BRL',m):ext('https://www.bcb.gov.br/publicacoes/focus',m)});
  if(!n&&dest)return `<a class="tl" href="${dest}" title="Ir para a seção">${o}</a>`;return o}
 const destDe=t=>/FGC|instituição|vence |vencimento/i.test(t)?'#sec-risco':/Proventos esperados/i.test(t)?'#sec-prov':/alvo do perfil|aporte/i.test(t)?'#sec-aloc':/Patrimônio (subiu|caiu)/i.test(t)?'#sec-meta':'';
-const itens=l=>l.map(x=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--bar)"><span style="flex:0 0 auto;align-self:flex-start;font-size:11px;font-weight:700;color:#fff;background:${NIV[x.n][0]};border-radius:99px;padding:2px 10px">${NIV[x.n][1]}</span><div><b>${lt(x.t,destDe(x.t+' '+x.d))}</b><div class="mu" style="margin-top:2px;font-size:13px">${lt(x.d,'')}</div></div></div>`).join('');
+let LD={};try{LD=JSON.parse(localStorage.getItem('dash_lidos')||'{}')||{}}catch(e){}
+const kH=t=>'h:'+String(t).replace(/\d+([.,]\d+)*/g,'#'),kM=t=>'m:'+(X.mud_base||'')+'|'+t;
+const okBtn=k=>`<button class="okb" data-k="${encodeURIComponent(k)}" title="Marcar como lido" aria-label="Marcar como lido">✓</button>`;
+const nLidos=p=>Object.keys(LD).filter(k=>k.startsWith(p)).length;
+const rstBtn=p=>nLidos(p)?`<div><button class="rst" data-rp="${p}">Restaurar ${nLidos(p)} lido(s)</button></div>`:'';
+const itens=l=>l.map(x=>`<div style="display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--bar)"><span style="flex:0 0 auto;align-self:flex-start;font-size:11px;font-weight:700;color:#fff;background:${NIV[x.n][0]};border-radius:99px;padding:2px 10px">${NIV[x.n][1]}</span><div><b>${lt(x.t,destDe(x.t+' '+x.d))}</b><div class="mu" style="margin-top:2px;font-size:13px">${lt(x.d,'')}</div></div>${okBtn(kH(x.t))}</div>`).join('');
 function lineSVG(series,labels,fy,h=250){const w=780,pl=56,pr=14,pt=12,pb=26,n=labels.length;
  const all=series.flatMap(s=>s.v.filter(x=>x!=null));if(!all.length)return '';let mn=Math.min(...all),mx=Math.max(...all);if(mx-mn<1e-9){mn-=1;mx+=1}
  const gx=i=>pl+(n<2?0:i*(w-pl-pr)/(n-1)),gy=v=>pt+(h-pt-pb)*(1-(v-mn)/(mx-mn));
@@ -1646,9 +1652,10 @@ function lineSVG(series,labels,fy,h=250){const w=780,pl=56,pr=14,pt=12,pb=26,n=l
 function barH(rot,v,max,cor,dir,marca){return `<div style="margin-top:12px"><div class="bh"><b>${rot}</b><span>${dir}</span></div><div class="bar"><b style="width:${Math.max(1,Math.min(100,max?v/max*100:0))}%;background:${cor}"></b>${marca!=null?`<span class="mk" style="left:${Math.min(100,marca)}%"></span>`:''}</div></div>`}
 function secHoje(c){if(!X)return '';let l=[...X.hoje];
  if(c.AP>0){const t=c.nomes.map((n,i)=>c.dest[i]>0?`${R(c.dest[i])} em ${n}`:'').filter(Boolean).join(', ');l.unshift({n:'alta',t:`Aporte de ${R(c.AP)} para distribuir`,d:t?`Pelo alvo do perfil ${S.perfil}: ${t}.`:'Todas as classes já estão no alvo; nada a direcionar.'})}
- const mud=X.mud.length?X.mud.map(m=>`<div style="padding:7px 0;border-bottom:1px solid var(--bar)">• ${lt(m,destDe(m))}</div>`).join(''):'<div class="vazio">Sem mudanças relevantes desde a última leitura.</div>';
- return `<section class="row"><div class="card big" style="flex:1 1 620px"><h3>O que fazer hoje</h3><div class="mu">Sinais mecânicos pelos seus critérios e limites (aba Parametros), em ordem de prioridade. Não é recomendação de investimento.</div>${l.length?itens(l):'<div class="vazio">Nada urgente hoje. Carteira dentro dos limites que você definiu.</div>'}</div>
- <div class="card big" style="flex:1 1 380px"><h3>O que mudou desde ontem</h3><div class="mu">${X.mud_base}</div><div style="margin-top:8px;font-size:13px">${mud}</div></div></section>`}
+ l=l.filter(x=>!LD[kH(x.t)]);const mm=X.mud.filter(m=>!LD[kM(m)]);
+ const mud=mm.length?mm.map(m=>`<div style="padding:7px 0;border-bottom:1px solid var(--bar);display:flex;gap:12px;align-items:flex-start"><div>• ${lt(m,destDe(m))}</div>${okBtn(kM(m))}</div>`).join(''):'<div class="vazio">Sem mudanças relevantes desde a última leitura.</div>';
+ return `<section class="row"><div class="card big" style="flex:1 1 620px"><h3>O que fazer hoje</h3><div class="mu">Sinais mecânicos pelos seus critérios e limites (aba Parametros), em ordem de prioridade. Não é recomendação de investimento.</div>${l.length?itens(l):'<div class="vazio">Nada urgente hoje. Carteira dentro dos limites que você definiu.</div>'}${rstBtn('h:')}</div>
+ <div class="card big" style="flex:1 1 380px"><h3>O que mudou desde ontem</h3><div class="mu">${X.mud_base}</div><div style="margin-top:8px;font-size:13px">${mud}</div>${rstBtn('m:')}</div></section>`}
 let MT={};try{MT=JSON.parse(localStorage.getItem('dash_meta')||'{}')||{}}catch(e){}
 const metaEf=()=>{const b=X.meta,o=k=>(typeof MT[k]=='number'&&MT[k]>=0)?MT[k]:b[k];return {pat:o('pat'),renda:o('renda'),prazo:o('prazo'),ret:o('ret')}};
 const brIn=v=>Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1810,7 +1817,7 @@ function ficha(k){const f=D.fichas[k];if(!f)return;const tk=k.split(':')[1];
  const esc=e=>{if(e.key=='Escape')fecha()};
  ov.addEventListener('click',e=>{if(e.target==ov||e.target.classList.contains('mx'))fecha()});
  document.addEventListener('keydown',esc);clearTimeout(window.__rl);document.body.appendChild(ov)}
-document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('.clk');if(t)ficha(t.dataset.f);const m=e.target.closest&&e.target.closest('.clm');if(m)provMes(+m.dataset.m,m.dataset.t)});
+document.addEventListener('click',e=>{const ob=e.target.closest&&e.target.closest('.okb');if(ob){LD[decodeURIComponent(ob.dataset.k)]=1;try{localStorage.setItem('dash_lidos',JSON.stringify(LD))}catch(x){}render();return}const rb=e.target.closest&&e.target.closest('.rst');if(rb){Object.keys(LD).forEach(k=>{if(k.startsWith(rb.dataset.rp))delete LD[k]});try{localStorage.setItem('dash_lidos',JSON.stringify(LD))}catch(x){}render();return}const t=e.target.closest&&e.target.closest('.clk');if(t)ficha(t.dataset.f);const m=e.target.closest&&e.target.closest('.clm');if(m)provMes(+m.dataset.m,m.dataset.t)});
 render();
 if(!/[?&]pdf=1/.test(location.search)){pegaUSD();setInterval(pegaUSD,30000)}
 if(/[?&]pdf=1/.test(location.search)){
