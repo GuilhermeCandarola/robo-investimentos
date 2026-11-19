@@ -1070,7 +1070,7 @@ def construir_dashboard(wb, ctx):
             campos_ = ficha_linha(l_, cols_)
             _c, _r = l_.get("Cotação"), l_.get("Rendimento 12m (R$/cota)")
             if ok(_c) and ok(_r):
-                campos_.insert(2, ["Se comprar 1 cota", f"1 cota de R$ {fbr(_c)} - dividendo estimado R$ {fbr(_r)}"])
+                campos_.insert(2, ["Se comprar 1 cota", f"1 cota de R$ {fbr(_c)} - dividendo estimado por mês R$ {fbr(_r / 12, 3)}"])
             campos_.insert(len(campos_) - 1, ["Quando paga (data ex)", padrao_proventos(p.get("proventos"), str(l_["Ticker"]), AGORA.date())])
             fichas[f"{cls_}:{l_['Ticker']}"] = {"nome": NOMES.get(l_["Ticker"], ""), "pos": pos_,
                                                 "campos": campos_}
